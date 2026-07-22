@@ -11,12 +11,13 @@ from database.vector_memory import VectorMemory
 from providers.embeddings import SentenceTransformerProvider
 
 
-class PromptMemoryMatrix:
-    """Facade over persistent source, vector, graph, retrieval, and context layers."""
+class ContextualMemoryMatrix:
+    """Facade over persistent source, vector, graph, and retrieval layers."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
         self.settings.prepare()
+
         self.repository = SQLiteRepository(self.settings.sqlite_path)
         self.repository.initialize()
 
@@ -26,19 +27,48 @@ class PromptMemoryMatrix:
 
     @cached_property
     def vectors(self) -> VectorMemory:
-        return VectorMemory(self.settings.chroma_path, self.settings.collection_name, self.embedder)
+        return VectorMemory(
+            self.settings.chroma_path,
+            self.settings.collection_name,
+            self.embedder,
+        )
 
     @cached_property
     def ingestion(self) -> IngestionService:
-        return IngestionService(self.settings, self.repository, self.vectors)
+        return IngestionService(
+            self.settings,
+            self.repository,
+            self.vectors,
+        )
 
     @cached_property
     def retrieval(self) -> RetrievalEngine:
-        return RetrievalEngine(self.settings, self.repository, self.vectors)
+        return RetrievalEngine(
+            self.settings,
+            self.repository,
+            self.vectors,
+        )
 
     @cached_property
     def context(self) -> ContextBuilder:
         return ContextBuilder(self.settings, self.retrieval)
+
+    def clear(self) -> dict:
+        vector_count = self.vectors.count()
+        sqlite_counts = self.repository.stats()
+
+        self.vectors.clear()
+        self.repository.clear()
+
+        return {
+            "cleared": True,
+            "deleted": {
+                **sqlite_counts,
+                "vectors": vector_count,
+            },
+            "sqlite_path": str(self.settings.sqlite_path),
+            "chroma_path": str(self.settings.chroma_path),
+        }
 
     def stats(self) -> dict:
         result = self.repository.stats()
@@ -46,3 +76,7 @@ class PromptMemoryMatrix:
         result["sqlite_path"] = str(self.settings.sqlite_path)
         result["chroma_path"] = str(self.settings.chroma_path)
         return result
+
+
+# Temporary compatibility alias for code written against the first prototype.
+PromptMemoryMatrix = ContextualMemoryMatrix

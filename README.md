@@ -1,16 +1,23 @@
-# Prompt Memory MCP
+# Contextual Memory MCP
 
-A local-first, Myriad-inspired persistent memory server for reusable prompt building blocks.
+A local-first persistent memory service for extending the useful context
+available to AI models.
 
-## Layers
+The project is intentionally being developed in stages. The first stage indexes
+files from a user-selected directory into persistent source, segment, vector,
+and graph storage. Retrieval and active-context assembly will be refined after
+the ingestion model is stable.
 
-- **Source repository:** canonical files and indexing state in SQLite.
-- **Segment repository:** structured Markdown sections and prompt fragments.
-- **Vector memory:** persistent ChromaDB embeddings.
-- **Knowledge graph:** concepts and typed relationships in SQLite.
-- **Retrieval engine:** vector, lexical, graph, and importance reranking.
-- **Context builder:** returns clean source-attributed Markdown for the active context window.
-- **MCP adapter:** thin tool layer over the core `PromptMemoryMatrix` facade.
+## Current capabilities
+
+- Scan any directory supplied by the user.
+- Include Markdown, text, and `.prompt` files.
+- Exclude subdirectories by name or relative path.
+- Incrementally update changed files.
+- Remove indexed files that disappeared from a previously scanned root.
+- Persist source metadata and graph data in SQLite.
+- Persist embeddings in ChromaDB.
+- Clear the complete database.
 
 ## Install
 
@@ -21,28 +28,74 @@ pip install -e .
 cp .env.example .env
 ```
 
-Place saved prompts in `./prompts`, then index them:
+## Scan a directory
+
+The source directory is required. It is not fixed to a repository-local
+`./prompts` folder.
 
 ```bash
-prompt-memory-index scan
-prompt-memory-index search "realistic character reference sheet"
-prompt-memory-index context "Create a gender-swapped character model sheet"
+contextual-memory-index scan /path/to/saved/prompts
 ```
 
-Run the MCP server over stdio:
+Exclude subdirectories by name:
 
 ```bash
-prompt-memory-mcp
+contextual-memory-index scan /path/to/saved/prompts   --exclude archive   --exclude experiments
 ```
 
-## MCP tools
+Exclude a relative path:
 
-- `scan_prompt_directory`
-- `search_prompt_memory`
-- `build_active_context`
-- `remember_text`
-- `inspect_concept`
-- `memory_stats`
-- `forget_source`
+```bash
+contextual-memory-index scan /path/to/saved/prompts   --exclude old/deprecated
+```
 
-The Markdown files remain the source of truth. ChromaDB and SQLite can be rebuilt from them.
+Force a complete re-index of the selected directory:
+
+```bash
+contextual-memory-index scan /path/to/saved/prompts --force
+```
+
+## Clear all stored memory
+
+Interactive confirmation:
+
+```bash
+contextual-memory-index clear
+```
+
+Non-interactive confirmation:
+
+```bash
+contextual-memory-index clear --yes
+```
+
+## Run the MCP server
+
+```bash
+contextual-memory-mcp
+```
+
+The initial MCP surface contains only:
+
+- `scan_directory`
+- `clear_memory`
+
+The scanner accepts the directory at call time, allowing the host AI or user to
+choose which directory is indexed rather than relying on a hardcoded source
+folder.
+
+## Storage
+
+By default, persistent data is written beneath `./data`:
+
+- `contextual_memory.sqlite3`
+- `chroma/`
+
+Change the location with `CM_DATA_DIR`.
+
+## Project direction
+
+Saved prompt building blocks are the first ingestion target, not the final
+scope. Later stages can add other document types, explicit memories, multiple
+collections, session context, retrieval policies, graph inspection, and
+active-context assembly without changing the basic storage facade.

@@ -1,59 +1,48 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from core.memory_matrix import PromptMemoryMatrix
-
-mcp = FastMCP("Prompt Memory")
-memory = PromptMemoryMatrix()
+from core.memory_matrix import ContextualMemoryMatrix
 
 
-@mcp.tool()
-def scan_prompt_directory(force: bool = False) -> dict:
-    """Incrementally index the configured prompt directory."""
-    return memory.ingestion.scan(force)
+mcp = FastMCP("Contextual Memory")
+memory = ContextualMemoryMatrix()
 
 
 @mcp.tool()
-def search_prompt_memory(query: str, top_k: int = 8) -> dict:
-    """Search vector, lexical, and graph memory for reusable prompt fragments."""
-    hits = memory.retrieval.search(query, top_k)
-    return {"query": query, "results": [asdict(hit) for hit in hits]}
+def scan_directory(
+    directory: str,
+    exclude: list[str] | None = None,
+    force: bool = False,
+) -> dict:
+    """Index supported files from a user-specified directory.
+
+    Args:
+        directory:
+            Absolute or relative directory to scan.
+        exclude:
+            Optional subdirectory names or relative paths to skip.
+        force:
+            Re-index files whose content has not changed.
+    """
+    return memory.ingestion.scan(
+        directory=Path(directory),
+        force=force,
+        excludes=exclude,
+    )
 
 
 @mcp.tool()
-def build_active_context(task: str, top_k: int = 8, max_chars: int = 18000) -> str:
-    """Build clean Markdown memory blocks for insertion into an active LLM context."""
-    return memory.context.build(task, top_k, max_chars)
-
-
-@mcp.tool()
-def remember_text(title: str, text: str, concepts: list[str] | None = None) -> dict:
-    """Store an explicit durable memory outside the watched file directory."""
-    return memory.ingestion.remember(title, text, concepts)
-
-
-@mcp.tool()
-def inspect_concept(concept: str, limit: int = 20) -> dict:
-    """Inspect a graph concept, related concepts, and supporting segments."""
-    return memory.repository.inspect_concept(concept, limit)
-
-
-@mcp.tool()
-def memory_stats() -> dict:
-    """Return source, segment, concept, edge, and vector counts."""
-    return memory.stats()
-
-
-@mcp.tool()
-def forget_source(source_path_or_id: str) -> dict:
-    """Remove one indexed source and its vector entries."""
-    removed, segment_ids = memory.repository.delete_source(source_path_or_id)
-    if removed:
-        memory.vectors.delete(segment_ids)
-    return {"removed": removed, "segments_deleted": len(segment_ids)}
+def clear_memory(confirm: bool = False) -> dict:
+    """Delete every indexed source, segment, concept, graph edge, and vector."""
+    if not confirm:
+        return {
+            "cleared": False,
+            "error": "Set confirm=true to clear the memory database.",
+        }
+    return memory.clear()
 
 
 def main() -> None:

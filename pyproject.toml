@@ -3,9 +3,9 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "prompt-memory-mcp"
+name = "contextual-memory-mcp"
 version = "0.1.0"
-description = "A Myriad-inspired persistent prompt memory MCP server"
+description = "A local-first persistent contextual memory server for AI systems"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,8 +20,8 @@ dependencies = [
 dev = ["pytest>=8,<10", "ruff>=0.6,<1"]
 
 [project.scripts]
-prompt-memory-mcp = "mcp_server.server:main"
-prompt-memory-index = "main:main"
+contextual-memory-mcp = "mcp_server.server:main"
+contextual-memory-index = "main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["core", "database", "extraction", "providers", "mcp_server"]

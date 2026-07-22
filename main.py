@@ -2,34 +2,77 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
+from pathlib import Path
 
-from core.memory_matrix import PromptMemoryMatrix
+from core.memory_matrix import ContextualMemoryMatrix
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Index files into the contextual memory database."
+    )
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    scan = subcommands.add_parser(
+        "scan",
+        help="Scan a user-specified directory and update the persistent index.",
+    )
+    scan.add_argument(
+        "directory",
+        type=Path,
+        help="Directory containing the files to index.",
+    )
+    scan.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Exclude a subdirectory name or relative path. "
+            "May be supplied more than once."
+        ),
+    )
+    scan.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-index files even when their content hash is unchanged.",
+    )
+
+    clear = subcommands.add_parser(
+        "clear",
+        help="Delete all indexed sources, segments, concepts, graph edges, and vectors.",
+    )
+    clear.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm the destructive operation without an interactive prompt.",
+    )
+
+    return parser
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prompt Memory MCP index utility")
-    sub = parser.add_subparsers(dest="command", required=True)
-    scan = sub.add_parser("scan")
-    scan.add_argument("--force", action="store_true")
-    search = sub.add_parser("search")
-    search.add_argument("query")
-    search.add_argument("--top-k", type=int, default=8)
-    context = sub.add_parser("context")
-    context.add_argument("task")
-    context.add_argument("--top-k", type=int, default=8)
-    sub.add_parser("stats")
+    parser = build_parser()
     args = parser.parse_args()
-    memory = PromptMemoryMatrix()
+    memory = ContextualMemoryMatrix()
+
     if args.command == "scan":
-        result = memory.ingestion.scan(args.force)
-    elif args.command == "search":
-        result = [asdict(hit) for hit in memory.retrieval.search(args.query, args.top_k)]
-    elif args.command == "context":
-        print(memory.context.build(args.task, args.top_k))
-        return
+        result = memory.ingestion.scan(
+            directory=args.directory,
+            force=args.force,
+            excludes=args.exclude,
+        )
     else:
-        result = memory.stats()
+        if not args.yes:
+            answer = input(
+                "Clear the entire contextual memory database? "
+                "This cannot be undone. [y/N] "
+            )
+            if answer.strip().lower() not in {"y", "yes"}:
+                print("Clear cancelled.")
+                return
+        result = memory.clear()
+
     print(json.dumps(result, indent=2, default=str))
 
 
