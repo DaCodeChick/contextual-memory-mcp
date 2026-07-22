@@ -39,10 +39,6 @@ class MemorySegment:
     memory_origin: MemoryOrigin = MemoryOrigin.UNKNOWN
 
 
-# Compatibility alias for the first prompt-specific prototype.
-PromptSegment = MemorySegment
-
-
 @dataclass(slots=True)
 class SearchHit:
     segment_id: str
@@ -64,4 +60,10 @@ class SearchHit:
     memory_type: MemoryType
     memory_origin: MemoryOrigin
     concepts: list[str]
+    store_id: str
+    store_priority: float
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def memory_ref(self) -> str:
+        return f"{self.store_id}:{self.segment_id}"

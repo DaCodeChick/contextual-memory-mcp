@@ -33,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     scan.add_argument(
+        "--store",
+        required=True,
+        help="Writable target store ID.",
+    )
+    scan.add_argument(
         "--force",
         action="store_true",
         help="Re-index files even when their content hash is unchanged.",
@@ -41,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     clear = subcommands.add_parser(
         "clear",
         help="Delete all indexed sources, segments, concepts, graph edges, and vectors.",
+    )
+    clear.add_argument(
+        "--store",
+        required=True,
+        help="Writable store ID to clear.",
     )
     clear.add_argument(
         "--yes",
@@ -57,8 +67,9 @@ def main() -> None:
     memory = ContextualMemoryMatrix()
 
     if args.command == "scan":
-        result = memory.ingestion.scan(
+        result = memory.scan(
             directory=args.directory,
+            target_store=args.store,
             force=args.force,
             excludes=args.exclude,
         )
@@ -71,7 +82,7 @@ def main() -> None:
             if answer.strip().lower() not in {"y", "yes"}:
                 print("Clear cancelled.")
                 return
-        result = memory.clear()
+        result = memory.clear(args.store)
 
     print(json.dumps(result, indent=2, default=str))
 

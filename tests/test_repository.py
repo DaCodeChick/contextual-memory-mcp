@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from core.models import PromptSegment, SourceDocument
+from core.models import MemorySegment, SourceDocument
 from database.repositories import SQLiteRepository
 
 
-def make_segment(text: str, content_hash: str = "hash-1") -> PromptSegment:
-    return PromptSegment(
+def make_segment(text: str, content_hash: str = "hash-1") -> MemorySegment:
+    return MemorySegment(
         "seg_1",
         "src_1",
         0,

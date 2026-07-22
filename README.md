@@ -159,6 +159,7 @@ Persistent data is stored beneath `CM_DATA_DIR`, which defaults to `./data`:
 
 - `contextual_memory.sqlite3`
 - `chroma/`
+- `store_registry.sqlite3` (mounted stores and locked-store overlays)
 
 The embedding model is downloaded and cached locally by Sentence Transformers
 on first use.
@@ -203,3 +204,48 @@ all proposed changes without mutating storage.
 
 All state, type, origin, lifecycle-reason, and importance-reason enums are
 stored as SQLite integers and exposed in Python as `IntEnum` values.
+
+
+## Multiple memory stores
+
+The server provides a writable `main` store. Additional stores can be mounted
+as writable, read-only, or immutable databases and searched together. Returned
+memory IDs are globally qualified, for example `ghidra-core:seg_abcd`. APIs
+require store-qualified memory references and explicit write destinations.
+
+Store modes are SQLite integers exposed through `StoreMode`:
+
+```text
+0 READ_WRITE
+1 READ_ONLY
+2 IMMUTABLE
+```
+
+Writes require an explicit `target_store`; they are never broadcast.
+Maintenance runs only against writable stores. Read-only and immutable SQLite
+databases are opened with SQLite read-only URI modes and are never migrated
+automatically. Their recall access counts and user-specific ranking choices are
+kept in the writable registry overlay instead of changing canonical content.
+
+A store manifest may be loaded at startup with `CM_STORES_FILE`:
+
+```json
+{
+  "stores": [
+    {
+      "store_id": "reference",
+      "display_name": "Reference Knowledge",
+      "sqlite_path": "stores/reference/memory.sqlite3",
+      "chroma_path": "stores/reference/chroma",
+      "mode": 2,
+      "priority": 1.15,
+      "specialty": "documentation"
+    }
+  ]
+}
+```
+
+The MCP also exposes store listing, mounting, unmounting, filtered recall, and
+locked-memory overlays (`local_boost`, `hidden`, and `pinned_override`). This is
+the completed generic foundation for future specialties; no Ghidra-specific
+code is included yet.

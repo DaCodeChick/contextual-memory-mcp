@@ -3,7 +3,10 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from core.enums import MemoryOrigin, MemoryState, MemoryType
+from pathlib import Path
+
 from core.memory_matrix import ContextualMemoryMatrix
+from core.stores import MemoryStoreConfig, StoreMode
 
 
 mcp = FastMCP(
@@ -25,6 +28,7 @@ def recall_memory(
     query: str,
     top_k: int = 8,
     max_chars: int = 18000,
+    stores: list[str] | None = None,
 ) -> str:
     """Recall relevant long-term memory for the current task.
 
@@ -48,11 +52,13 @@ def recall_memory(
         task=query,
         top_k=top_k,
         max_chars=max_chars,
+        stores=stores,
     )
 
 
 @mcp.tool()
 def remember_memory(
+    target_store: str,
     title: str,
     content: str,
     concepts: list[str] | None = None,
@@ -77,7 +83,8 @@ def remember_memory(
             3 relationship, 4 project, 5 skill, 6 procedure,
             7 observation, or 8 inference.
     """
-    return memory.ingestion.remember(
+    return memory.remember(
+        target_store=target_store,
         title=title,
         text=content,
         concepts=concepts,
@@ -89,6 +96,7 @@ def remember_memory(
 
 @mcp.tool()
 def store_memory_candidate(
+    target_store: str,
     title: str,
     content: str,
     concepts: list[str] | None = None,
@@ -109,7 +117,8 @@ def store_memory_candidate(
         memory_type:
             Integer MemoryType value. Inference (8) is the default.
     """
-    return memory.ingestion.remember(
+    return memory.remember(
+        target_store=target_store,
         title=title,
         text=content,
         concepts=concepts,
@@ -121,7 +130,7 @@ def store_memory_candidate(
 
 @mcp.tool()
 def update_memory_lifecycle(
-    segment_id: str,
+    memory_ref: str,
     memory_state: int | None = None,
     memory_type: int | None = None,
     memory_origin: int | None = None,
@@ -135,7 +144,7 @@ def update_memory_lifecycle(
     3 generated summary, 4 model inference, 5 specialty.
     """
     return memory.update_lifecycle(
-        segment_id,
+        memory_ref,
         memory_state=memory_state,
         memory_type=memory_type,
         memory_origin=memory_origin,
@@ -143,12 +152,19 @@ def update_memory_lifecycle(
 
 
 @mcp.tool()
-def run_memory_maintenance(dry_run: bool = False) -> dict:
+def run_memory_maintenance(
+    dry_run: bool = False, stores: list[str] | None = None
+) -> dict:
     """Reinforce/decay importance, then evaluate lifecycle transitions."""
-    result = memory.run_maintenance(apply=not dry_run)
-    importance = result["importance"]
-    lifecycle = result["lifecycle"]
-    return {
+    result = memory.run_maintenance(apply=not dry_run, stores=stores)
+    formatted = {}
+    for store_id, store_result in result.items():
+        if store_result.get("skipped"):
+            formatted[store_id] = store_result
+            continue
+        importance = store_result["importance"]
+        lifecycle = store_result["lifecycle"]
+        formatted[store_id] = {
         "importance": {
             "evaluated": importance.evaluated,
             "adjusted": importance.adjusted,
@@ -170,18 +186,21 @@ def run_memory_maintenance(dry_run: bool = False) -> dict:
             "changed": lifecycle.changed,
             "changed_segment_ids": list(lifecycle.changed_segment_ids),
         },
-    }
+        }
+    return formatted
 
 
 @mcp.tool()
-def run_memory_lifecycle(dry_run: bool = False) -> dict:
+def run_memory_lifecycle(
+    store_id: str, dry_run: bool = False
+) -> dict:
     """Evaluate automatic memory promotion and archival rules.
 
     Args:
         dry_run:
             When true, return the proposed transitions without applying them.
     """
-    result = memory.run_lifecycle(apply=not dry_run)
+    result = memory.run_lifecycle(apply=not dry_run, store_id=store_id)
     return {
         "evaluated": result.evaluated,
         "changed": result.changed,
@@ -205,6 +224,7 @@ def run_memory_lifecycle(dry_run: bool = False) -> dict:
 
 @mcp.tool()
 def explore_memory(
+    store_id: str,
     concept: str,
     limit: int = 20,
 ) -> str:
@@ -221,6 +241,7 @@ def explore_memory(
             Maximum related concepts and supporting memories to return.
     """
     return memory.context.explore_concept(
+        store_id=store_id,
         concept=concept,
         limit=limit,
     )
@@ -228,7 +249,7 @@ def explore_memory(
 
 @mcp.tool()
 def update_memory_weighting(
-    segment_id: str,
+    memory_ref: str,
     importance: float | None = None,
     confidence: float | None = None,
     source_quality: float | None = None,
@@ -237,8 +258,8 @@ def update_memory_weighting(
     """Update persistent ranking metadata for one memory segment.
 
     Args:
-        segment_id:
-            The Memory ID returned by recall_memory.
+        memory_ref:
+            The store-qualified Memory ID returned by recall_memory.
         importance:
             Intrinsic importance from 0.0 to 2.0.
         confidence:
@@ -248,8 +269,8 @@ def update_memory_weighting(
         pinned:
             Whether to give the memory an explicit ranking boost.
     """
-    return memory.repository.set_segment_weighting(
-        segment_id,
+    return memory.update_weighting(
+        memory_ref,
         importance=importance,
         confidence=confidence,
         source_quality=source_quality,
@@ -258,9 +279,72 @@ def update_memory_weighting(
 
 
 @mcp.tool()
-def explain_memory_ranking(query: str, top_k: int = 8) -> list[dict]:
+def explain_memory_ranking(
+    query: str, top_k: int = 8, stores: list[str] | None = None
+) -> list[dict]:
     """Explain how candidate memories were ranked for a query."""
-    return memory.retrieval.explain(query, top_k)
+    return memory.retrieval.explain(query, top_k, stores=stores)
+
+
+
+@mcp.tool()
+def list_memory_stores() -> list[dict]:
+    """List mounted memory stores and their integer-backed access modes."""
+    return memory.list_stores()
+
+
+@mcp.tool()
+def mount_memory_store(
+    store_id: str,
+    display_name: str,
+    sqlite_path: str,
+    chroma_path: str,
+    mode: int = int(StoreMode.IMMUTABLE),
+    priority: float = 1.0,
+    collection_name: str = "context_segments",
+    specialty: str | None = None,
+) -> dict:
+    """Mount an existing dedicated memory store. Mode: 0 writable, 1 read-only, 2 immutable."""
+    config = MemoryStoreConfig(
+        store_id=store_id,
+        display_name=display_name,
+        sqlite_path=Path(sqlite_path).expanduser().resolve(),
+        chroma_path=Path(chroma_path).expanduser().resolve(),
+        collection_name=collection_name,
+        mode=StoreMode(mode),
+        enabled=True,
+        priority=priority,
+        specialty=specialty,
+    )
+    return memory.mount_store(config)
+
+
+@mcp.tool()
+def set_memory_store_enabled(store_id: str, enabled: bool) -> dict:
+    """Enable or disable a mounted store without deleting or unmounting it."""
+    return memory.set_store_enabled(store_id, enabled)
+
+
+@mcp.tool()
+def unmount_memory_store(store_id: str) -> dict:
+    """Unmount a dedicated store without deleting its files."""
+    return {"store_id": store_id, "unmounted": memory.unmount_store(store_id)}
+
+
+@mcp.tool()
+def update_locked_memory_overlay(
+    memory_ref: str,
+    local_boost: float | None = None,
+    hidden: bool | None = None,
+    pinned_override: bool | None = None,
+) -> dict:
+    """Set mutable local ranking preferences for a read-only or immutable memory."""
+    return memory.update_weighting(
+        memory_ref,
+        local_boost=local_boost,
+        hidden=hidden,
+        pinned_override=pinned_override,
+    )
 
 
 def main() -> None:

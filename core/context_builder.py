@@ -18,8 +18,9 @@ class ContextBuilder:
         task: str,
         top_k: int | None = None,
         max_chars: int | None = None,
+        stores: list[str] | None = None,
     ) -> str:
-        hits = self.retrieval.search(task, top_k)
+        hits = self.retrieval.search(task, top_k, stores=stores)
         budget = max_chars or self.settings.max_context_chars
 
         if not hits:
@@ -49,7 +50,8 @@ class ContextBuilder:
             block = (
                 f"## Memory {index}: {hit.title}{heading}\n"
                 f"Source: `{hit.source_path}`\n"
-                f"Memory ID: `{hit.segment_id}`\n"
+                f"Store: `{hit.store_id}`\n"
+                f"Memory ID: `{hit.memory_ref}`\n"
                 f"Relevance: {score}\n"
                 + (
                     f"Concepts: {', '.join(hit.concepts[:10])}\n"
@@ -75,13 +77,11 @@ class ContextBuilder:
 
     def explore_concept(
         self,
+        store_id: str,
         concept: str,
         limit: int = 20,
     ) -> str:
-        result = self.retrieval.repository.inspect_concept(
-            concept,
-            limit,
-        )
+        result = self.retrieval.inspect_concept(store_id, concept, limit)
         if not result.get("found"):
             return (
                 "# Contextual Memory Concept\n\n"

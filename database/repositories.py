@@ -31,12 +31,20 @@ def concept_id(name: str) -> str:
 
 
 class SQLiteRepository:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self, path: Path, *, read_only: bool = False, immutable: bool = False
+    ) -> None:
         self.path = path
+        self.read_only = read_only or immutable
+        self.immutable = immutable
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path)
+        if self.read_only:
+            suffix = "?mode=ro&immutable=1" if self.immutable else "?mode=ro"
+            db = sqlite3.connect(f"file:{self.path}{suffix}", uri=True)
+        else:
+            db = sqlite3.connect(self.path)
         db.row_factory = sqlite3.Row
         db.create_function(
             "sha256_text",
@@ -54,6 +62,8 @@ class SQLiteRepository:
             db.close()
 
     def initialize(self) -> None:
+        if self.read_only:
+            raise PermissionError("Cannot initialize a read-only SQLite repository")
         with self.connect() as db:
             db.executescript(SCHEMA)
             apply_migrations(db)
@@ -270,15 +280,6 @@ class SQLiteRepository:
                 "unchanged": unchanged_ids,
                 "deleted": deleted_ids,
             }
-
-    def replace_document(
-        self,
-        doc: SourceDocument,
-        segments: Sequence[MemorySegment],
-        source_kind: str = "file",
-    ) -> None:
-        """Compatibility wrapper for callers from the initial prototype."""
-        self.reconcile_document(doc, segments, source_kind=source_kind)
 
     @staticmethod
     def _rebuild_concept_edges(db: sqlite3.Connection) -> None:

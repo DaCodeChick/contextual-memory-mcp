@@ -1,28 +1,20 @@
-# Memory Importance Consolidation
+# Multi-store foundation
 
-This patch completes the planned memory-importance lifecycle for the current branch.
+- Added integer-backed READ_WRITE, READ_ONLY, and IMMUTABLE store modes.
+- Requires store-qualified memory references and explicit write routing.
+- Added persistent store registry and startup manifest loading.
+- Added federated retrieval, store priorities, filters, and qualified memory refs.
+- Added deterministic write routing and locked-store write rejection.
+- Added writable overlays for access counts, local boosts, hiding, and pin overrides.
+- Added store-aware maintenance, lifecycle, weighting, CLI, and MCP tools.
+- Locked SQLite stores use read-only/immutable URI modes and are schema-validated without migration.
+- Stopped before implementing any Ghidra specialty behavior.
 
-## Implemented
+## Strict pre-release API cleanup
 
-- Persistent integer-backed importance audit reasons.
-- Migration-safe importance bookkeeping:
-  - `importance_access_count`
-  - `importance_reason`
-  - `importance_updated_at`
-- Configurable access reinforcement.
-- Configurable inactivity decay with a grace period, floor, ceiling, and pinned-memory protection.
-- Incremental decay that does not double-apply when maintenance runs repeatedly.
-- Optimistic concurrency checks for stale importance decisions.
-- A repository-backed `ImportanceService` with dry-run support.
-- A combined maintenance pass that applies importance changes before lifecycle promotion/archive decisions.
-- Chroma importance metadata synchronization.
-- Recency as an explainable ranking component.
-- Environment configuration for importance and recency policy.
-- MCP `run_memory_maintenance` tool.
-- Tests covering reinforcement, decay, pin protection, persistence, and dry runs.
-
-## Validation
-
-- `28 passed`
-- Python bytecode compilation passed.
-- Ruff was not installed in the supplied environment.
+- Removed prompt-era type and facade aliases.
+- Removed the obsolete document replacement wrapper.
+- Removed single-store facade properties from the federated matrix.
+- Removed implicit default write routing.
+- Required store-qualified memory references.
+- Required explicit store IDs for lifecycle, importance, clear, scan, and concept exploration operations.

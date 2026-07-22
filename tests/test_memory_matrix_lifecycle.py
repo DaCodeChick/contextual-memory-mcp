@@ -33,7 +33,7 @@ def test_matrix_uses_configured_policy_and_syncs_vector_metadata(
     )
     matrix = ContextualMemoryMatrix(settings)
     fake_vectors = FakeVectors()
-    matrix.__dict__["vectors"] = fake_vectors
+    matrix.store("main").__dict__["vectors"] = fake_vectors
 
     doc = SourceDocument(
         "source",
@@ -58,14 +58,14 @@ def test_matrix_uses_configured_policy_and_syncs_vector_metadata(
         importance=1.8,
         memory_state=MemoryState.CANDIDATE,
     )
-    matrix.repository.reconcile_document(doc, [segment], source_kind="memory")
+    matrix.store("main").repository.reconcile_document(doc, [segment], source_kind="memory")
 
-    first = matrix.run_lifecycle()
+    first = matrix.run_lifecycle(store_id="main")
     assert first.changed == 0
     assert fake_vectors.updates == []
 
-    matrix.repository.set_segment_weighting("candidate", importance=2.0)
-    second = matrix.run_lifecycle()
+    matrix.store("main").repository.set_segment_weighting("candidate", importance=2.0)
+    second = matrix.run_lifecycle(store_id="main")
 
     assert second.changed_segment_ids == ("candidate",)
     assert fake_vectors.updates == [
