@@ -1,17 +1,26 @@
-# Patch Notes
+# Lifecycle Configuration and Vector Synchronization
 
-## Lifecycle audit and application service
+## Summary
 
-This patch adds the storage-backed half of automatic lifecycle management while
-keeping policy evaluation separate from database mutation.
+This patch integrates the repository-backed lifecycle service with the main
+memory facade and MCP server.
 
-- Added integer-backed `LifecycleReason` audit codes.
-- Added migration 0004 for lifecycle reason and transition timestamps.
-- Added `LifecycleService` for single-memory evaluation and batch passes.
-- Added dry-run support so lifecycle decisions can be inspected safely.
-- Added optimistic state guards to reject stale decisions.
-- Manual state changes are marked with the `MANUAL` reason code.
-- Promotion and archival timestamps survive future document reconciliation.
+## Changes
 
-Automatic scheduling and MCP exposure are intentionally deferred to a later
-small commit.
+- Adds environment-configurable promotion and archival thresholds.
+- Adds `ContextualMemoryMatrix.lifecycle` using the configured policy.
+- Adds `ContextualMemoryMatrix.run_lifecycle()`.
+- Synchronizes applied lifecycle transitions into Chroma metadata.
+- Adds `run_memory_lifecycle` MCP tool with dry-run support.
+- Reports changed segment IDs from lifecycle passes.
+- Expands lifecycle metadata reads to include memory type and origin.
+- Adds tests for changed IDs, configured thresholds, and vector synchronization.
+
+## Validation
+
+- `23 passed`
+- Python bytecode compilation passed.
+
+## Suggested commit
+
+`Integrate configurable lifecycle passes`

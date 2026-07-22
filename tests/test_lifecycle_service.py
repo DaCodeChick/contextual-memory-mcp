@@ -139,3 +139,18 @@ def test_stale_decision_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="changed after evaluation"):
         repo.apply_lifecycle_decision("candidate", decision)
+
+
+def test_run_reports_changed_segment_ids(tmp_path: Path) -> None:
+    repo = make_repository(tmp_path)
+    add_memory(
+        repo,
+        "candidate",
+        state=MemoryState.CANDIDATE,
+        importance=2.0,
+    )
+
+    result = LifecycleService(repo).run()
+
+    assert result.changed == 1
+    assert result.changed_segment_ids == ("candidate",)

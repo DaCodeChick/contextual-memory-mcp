@@ -5,6 +5,8 @@ from functools import cached_property
 from core.config import Settings
 from core.context_builder import ContextBuilder
 from core.ingestion_service import IngestionService
+from core.lifecycle import LifecyclePolicy
+from core.lifecycle_service import LifecycleRunResult, LifecycleService
 from core.retrieval_engine import RetrievalEngine
 from database.repositories import SQLiteRepository
 from database.vector_memory import VectorMemory
@@ -52,6 +54,43 @@ class ContextualMemoryMatrix:
     @cached_property
     def context(self) -> ContextBuilder:
         return ContextBuilder(self.settings, self.retrieval)
+
+    @cached_property
+    def lifecycle(self) -> LifecycleService:
+        policy = LifecyclePolicy(
+            promotion_importance=(
+                self.settings.lifecycle_promotion_importance
+            ),
+            promotion_access_count=(
+                self.settings.lifecycle_promotion_access_count
+            ),
+            minimum_confidence=(
+                self.settings.lifecycle_minimum_confidence
+            ),
+            minimum_source_quality=(
+                self.settings.lifecycle_minimum_source_quality
+            ),
+            archive_importance=(
+                self.settings.lifecycle_archive_importance
+            ),
+            archive_after_days=(
+                self.settings.lifecycle_archive_after_days
+            ),
+        )
+        return LifecycleService(self.repository, policy)
+
+    def run_lifecycle(self, *, apply: bool = True) -> LifecycleRunResult:
+        result = self.lifecycle.run(apply=apply)
+        if apply:
+            for segment_id in result.changed_segment_ids:
+                metadata = self.repository.lifecycle_metadata(segment_id)
+                self.vectors.update_lifecycle(
+                    segment_id,
+                    memory_state=int(metadata["memory_state"]),
+                    memory_type=int(metadata["memory_type"]),
+                    memory_origin=int(metadata["memory_origin"]),
+                )
+        return result
 
     def update_lifecycle(
         self,

@@ -143,6 +143,36 @@ def update_memory_lifecycle(
 
 
 @mcp.tool()
+def run_memory_lifecycle(dry_run: bool = False) -> dict:
+    """Evaluate automatic memory promotion and archival rules.
+
+    Args:
+        dry_run:
+            When true, return the proposed transitions without applying them.
+    """
+    result = memory.run_lifecycle(apply=not dry_run)
+    return {
+        "evaluated": result.evaluated,
+        "changed": result.changed,
+        "changed_segment_ids": list(result.changed_segment_ids),
+        "decisions": [
+            {
+                "action": int(decision.action),
+                "action_name": decision.action.name,
+                "current_state": int(decision.current_state),
+                "current_state_name": decision.current_state.name,
+                "target_state": int(decision.target_state),
+                "target_state_name": decision.target_state.name,
+                "reason_code": int(decision.reason_code),
+                "reason_code_name": decision.reason_code.name,
+                "reason": decision.reason,
+            }
+            for decision in result.decisions
+        ],
+    }
+
+
+@mcp.tool()
 def explore_memory(
     concept: str,
     limit: int = 20,

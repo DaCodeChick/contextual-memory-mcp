@@ -575,8 +575,9 @@ class SQLiteRepository:
         with self.connect() as db:
             row = db.execute(
                 """
-                SELECT segment_id, memory_state, importance, confidence,
-                       source_quality, access_count, pinned, last_accessed_at,
+                SELECT segment_id, memory_state, memory_type, memory_origin,
+                       importance, confidence, source_quality, access_count,
+                       pinned, last_accessed_at,
                        lifecycle_reason, state_changed_at, promoted_at,
                        archived_at
                 FROM segments

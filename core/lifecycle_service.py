@@ -14,6 +14,7 @@ class LifecycleRunResult:
     evaluated: int
     changed: int
     decisions: tuple[LifecycleDecision, ...]
+    changed_segment_ids: tuple[str, ...]
 
 
 class LifecycleService:
@@ -55,7 +56,7 @@ class LifecycleService:
     ) -> LifecycleRunResult:
         when = evaluated_at or datetime.now(timezone.utc)
         decisions: list[LifecycleDecision] = []
-        changed = 0
+        changed_segment_ids: list[str] = []
 
         for row in self.repository.lifecycle_candidates():
             decision = self.policy.evaluate(
@@ -69,12 +70,13 @@ class LifecycleService:
                     decision,
                     changed_at=when,
                 )
-                changed += 1
+                changed_segment_ids.append(str(row["segment_id"]))
 
         return LifecycleRunResult(
             evaluated=len(decisions),
-            changed=changed,
+            changed=len(changed_segment_ids),
             decisions=tuple(decisions),
+            changed_segment_ids=tuple(changed_segment_ids),
         )
 
     @staticmethod
