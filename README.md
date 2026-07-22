@@ -1,101 +1,178 @@
 # Contextual Memory MCP
 
-A local-first persistent memory service for extending the useful context
-available to AI models.
+A local-first persistent contextual-memory engine with an MCP adapter for AI
+models such as Qwen.
 
-The project is intentionally being developed in stages. The first stage indexes
-files from a user-selected directory into persistent source, segment, vector,
-and graph storage. Retrieval and active-context assembly will be refined after
-the ingestion model is stable.
+The project is being developed incrementally. The first ingestion target is a
+directory of reusable Markdown prompt material, but the storage and retrieval
+layers are general-purpose.
 
-## Current capabilities
+## Architecture
 
-- Scan any directory supplied by the user.
-- Include Markdown, text, and `.prompt` files.
-- Exclude subdirectories by name or relative path.
-- Incrementally update changed files.
-- Remove indexed files that disappeared from a previously scanned root.
-- Persist source metadata and graph data in SQLite.
-- Persist embeddings in ChromaDB.
-- Clear the complete database.
+```text
+Files and explicit memories
+          |
+          v
+Ingestion and segmentation
+          |
+          +--> SQLite source and graph storage
+          |
+          +--> ChromaDB vector storage
+          |
+          v
+Hybrid retrieval and context assembly
+          |
+          v
+Thin MCP adapter used by Qwen
+```
 
-## Install
+The CLI performs administrative work. The MCP server exposes memory operations
+that are useful to the model.
+
+## Install with uv
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+uv venv --python 3.12
+uv pip install -e .
 cp .env.example .env
 ```
 
-## Scan a directory
+Python 3.12 or 3.13 is recommended for broad compatibility with the current
+machine-learning dependencies.
 
-The source directory is required. It is not fixed to a repository-local
-`./prompts` folder.
+## Index a directory
 
-```bash
-contextual-memory-index scan /path/to/saved/prompts
-```
-
-Exclude subdirectories by name:
+The source directory is selected by the user at scan time:
 
 ```bash
-contextual-memory-index scan /path/to/saved/prompts   --exclude archive   --exclude experiments
+uv run contextual-memory-index scan /path/to/saved/prompts
 ```
 
-Exclude a relative path:
+Exclude subdirectories by name or relative path:
 
 ```bash
-contextual-memory-index scan /path/to/saved/prompts   --exclude old/deprecated
+uv run contextual-memory-index scan /path/to/saved/prompts \
+  --exclude archive \
+  --exclude experiments \
+  --exclude old/deprecated
 ```
 
-Force a complete re-index of the selected directory:
+Force unchanged files to be indexed again:
 
 ```bash
-contextual-memory-index scan /path/to/saved/prompts --force
+uv run contextual-memory-index scan /path/to/saved/prompts --force
 ```
 
-## Clear all stored memory
+## Clear stored data
 
 Interactive confirmation:
 
 ```bash
-contextual-memory-index clear
+uv run contextual-memory-index clear
 ```
 
 Non-interactive confirmation:
 
 ```bash
-contextual-memory-index clear --yes
+uv run contextual-memory-index clear --yes
 ```
+
+Scanning and clearing are deliberately CLI-only maintenance operations. They are
+not exposed to the model through MCP.
 
 ## Run the MCP server
 
 ```bash
-contextual-memory-mcp
+uv run contextual-memory-mcp
 ```
 
-The initial MCP surface contains only:
+The MCP server exposes three model-facing tools:
 
-- `scan_directory`
-- `clear_memory`
+### `recall_memory`
 
-The scanner accepts the directory at call time, allowing the host AI or user to
-choose which directory is indexed rather than relying on a hardcoded source
-folder.
+Retrieves semantically, lexically, and graph-related memory and returns clean,
+source-attributed Markdown that Qwen can use in its active context.
+
+Typical model call:
+
+```text
+recall_memory(
+  query="Create a gender-swapped character reference sheet while preserving identity, colors, and species traits"
+)
+```
+
+### `remember_memory`
+
+Stores explicit durable information that should survive beyond the current
+conversation, such as stable preferences, project decisions, reusable
+procedures, or compact session summaries.
+
+### `explore_memory`
+
+Traverses the knowledge graph around a concept and returns related concepts plus
+supporting memory excerpts.
+
+The MCP does **not** expose scan, clear, stats, or database-deletion tools. Those
+are administrative concerns and remain under direct user control.
+
+## LM Studio configuration
+
+Add the server as a stdio MCP using the repository's virtual environment. A
+typical configuration resembles:
+
+```json
+{
+  "mcpServers": {
+    "contextual-memory": {
+      "command": "/absolute/path/to/contextual-memory-mcp/.venv/bin/contextual-memory-mcp",
+      "args": [],
+      "cwd": "/absolute/path/to/contextual-memory-mcp"
+    }
+  }
+}
+```
+
+Alternatively, invoke it through uv:
+
+```json
+{
+  "mcpServers": {
+    "contextual-memory": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/contextual-memory-mcp",
+        "contextual-memory-mcp"
+      ]
+    }
+  }
+}
+```
+
+Use absolute paths when LM Studio is launched outside a terminal, because GUI
+applications may not inherit the same shell PATH.
 
 ## Storage
 
-By default, persistent data is written beneath `./data`:
+Persistent data is stored beneath `CM_DATA_DIR`, which defaults to `./data`:
 
 - `contextual_memory.sqlite3`
 - `chroma/`
 
-Change the location with `CM_DATA_DIR`.
+The embedding model is downloaded and cached locally by Sentence Transformers
+on first use.
 
-## Project direction
+## Current retrieval path
 
-Saved prompt building blocks are the first ingestion target, not the final
-scope. Later stages can add other document types, explicit memories, multiple
-collections, session context, retrieval policies, graph inspection, and
-active-context assembly without changing the basic storage facade.
+`recall_memory` currently combines:
+
+- semantic similarity from ChromaDB
+- SQLite full-text relevance
+- graph relationships
+- segment importance
+- per-source diversity
+- a configurable context-size budget
+
+The returned value is Markdown rather than an embedding blob or database
+record, so the model receives reusable source material directly.

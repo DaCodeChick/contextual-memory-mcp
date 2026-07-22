@@ -5,7 +5,7 @@ from typing import Sequence
 
 import chromadb
 
-from core.models import PromptSegment, SourceDocument
+from core.models import MemorySegment, SourceDocument
 from providers.embeddings import SentenceTransformerProvider
 
 
@@ -30,7 +30,7 @@ class VectorMemory:
     def replace_document(
         self,
         doc: SourceDocument,
-        segments: Sequence[PromptSegment],
+        segments: Sequence[MemorySegment],
     ) -> None:
         existing = self.collection.get(
             where={"source_id": doc.source_id},

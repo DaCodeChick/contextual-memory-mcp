@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Sequence
 
-from core.models import PromptSegment, SourceDocument
+from core.models import MemorySegment, SourceDocument
 from database.schema import SCHEMA
 
 
@@ -81,7 +81,7 @@ class SQLiteRepository:
     def replace_document(
         self,
         doc: SourceDocument,
-        segments: Sequence[PromptSegment],
+        segments: Sequence[MemorySegment],
         source_kind: str = "file",
     ) -> None:
         with self.connect() as db:

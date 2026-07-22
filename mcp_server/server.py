@@ -1,48 +1,104 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from mcp.server.fastmcp import FastMCP
 
 from core.memory_matrix import ContextualMemoryMatrix
 
 
-mcp = FastMCP("Contextual Memory")
+mcp = FastMCP(
+    "Contextual Memory",
+    instructions=(
+        "Use recall_memory whenever stored context may help answer the "
+        "user's request. The result is source-attributed Markdown intended "
+        "to be read and incorporated into the current response. Use "
+        "remember_memory only for durable information worth retaining "
+        "beyond the current conversation. Do not store transient chatter, "
+        "secrets, or information the user did not intend to preserve."
+    ),
+)
 memory = ContextualMemoryMatrix()
 
 
 @mcp.tool()
-def scan_directory(
-    directory: str,
-    exclude: list[str] | None = None,
-    force: bool = False,
-) -> dict:
-    """Index supported files from a user-specified directory.
+def recall_memory(
+    query: str,
+    top_k: int = 8,
+    max_chars: int = 18000,
+) -> str:
+    """Recall relevant long-term memory for the current task.
+
+    Call this before answering when previously indexed files or durable
+    memories may contain useful instructions, examples, constraints, facts,
+    preferences, or project context.
+
+    The result is source-attributed Markdown ready to use as supporting
+    context. The current user request always overrides conflicting memory.
 
     Args:
-        directory:
-            Absolute or relative directory to scan.
-        exclude:
-            Optional subdirectory names or relative paths to skip.
-        force:
-            Re-index files whose content has not changed.
+        query:
+            A complete natural-language description of what context is
+            needed. Include the task, important entities, and constraints.
+        top_k:
+            Maximum number of distinct memory segments to retrieve.
+        max_chars:
+            Maximum size of the returned Markdown context.
     """
-    return memory.ingestion.scan(
-        directory=Path(directory),
-        force=force,
-        excludes=exclude,
+    return memory.context.build(
+        task=query,
+        top_k=top_k,
+        max_chars=max_chars,
     )
 
 
 @mcp.tool()
-def clear_memory(confirm: bool = False) -> dict:
-    """Delete every indexed source, segment, concept, graph edge, and vector."""
-    if not confirm:
-        return {
-            "cleared": False,
-            "error": "Set confirm=true to clear the memory database.",
-        }
-    return memory.clear()
+def remember_memory(
+    title: str,
+    content: str,
+    concepts: list[str] | None = None,
+) -> dict:
+    """Store an explicit durable memory for later conversations.
+
+    Use this only when information should remain available long-term, such
+    as a stable user preference, project decision, reusable procedure,
+    confirmed fact, or compact session summary.
+
+    Args:
+        title:
+            A concise descriptive title.
+        content:
+            The complete memory in clear standalone Markdown.
+        concepts:
+            Optional normalized topics that should connect this memory to
+            related material in the knowledge graph.
+    """
+    return memory.ingestion.remember(
+        title=title,
+        text=content,
+        concepts=concepts,
+    )
+
+
+@mcp.tool()
+def explore_memory(
+    concept: str,
+    limit: int = 20,
+) -> str:
+    """Explore relationships around a stored concept.
+
+    Use this when recall_memory surfaces a concept that should be expanded,
+    or when the task depends on relationships among projects, constraints,
+    people, systems, formats, or other indexed ideas.
+
+    Args:
+        concept:
+            The concept name to inspect.
+        limit:
+            Maximum related concepts and supporting memories to return.
+    """
+    return memory.context.explore_concept(
+        concept=concept,
+        limit=limit,
+    )
 
 
 def main() -> None:

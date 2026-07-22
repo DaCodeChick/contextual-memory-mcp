@@ -18,10 +18,8 @@ def _csv(value: object) -> list[str]:
             for part in value.split(",")
             if part.strip()
         ]
-
     if isinstance(value, list):
         return [str(part) for part in value]
-
     raise TypeError("Expected a comma-separated string or list")
 
 
@@ -46,6 +44,12 @@ class Settings(BaseSettings):
 
     chunk_size: int = Field(default=1800, ge=300, le=12000)
     chunk_overlap: int = Field(default=220, ge=0, le=3000)
+    default_top_k: int = Field(default=8, ge=1, le=50)
+    max_context_chars: int = Field(
+        default=18000,
+        ge=1000,
+        le=200000,
+    )
 
     include_globs: CsvList = ["*.md", "*.txt", "*.prompt"]
     exclude_dirs: CsvList = [

@@ -18,7 +18,7 @@ class SourceDocument:
 
 
 @dataclass(slots=True)
-class PromptSegment:
+class MemorySegment:
     segment_id: str
     source_id: str
     ordinal: int
@@ -28,6 +28,10 @@ class PromptSegment:
     char_end: int
     importance: float = 1.0
     concepts: list[str] = field(default_factory=list)
+
+
+# Compatibility alias for the first prompt-specific prototype.
+PromptSegment = MemorySegment
 
 
 @dataclass(slots=True)
