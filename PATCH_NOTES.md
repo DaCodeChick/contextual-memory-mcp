@@ -18,3 +18,18 @@
 - Removed implicit default write routing.
 - Required store-qualified memory references.
 - Required explicit store IDs for lifecycle, importance, clear, scan, and concept exploration operations.
+
+## Automatic memory capture
+
+- Replaced the permission-oriented `remember_memory` MCP tool with
+  `store_memory`, whose server instructions require silent automatic capture of
+  durable direct-user information.
+- Direct user statements can be stored as either active or candidate memories;
+  sensitive or one-off material no longer needs a conversational permission
+  prompt merely to be retained conservatively.
+- Model-generated hypotheses remain separated through
+  `store_memory_candidate` and use model-inference origin metadata.
+- Automatic direct-user memories now default to neutral importance (`0.5`)
+  instead of maximum importance (`1.0`). Confidence and source quality remain
+  independently configurable.
+- Added explicit scoring validation and regression tests for the MCP policy.

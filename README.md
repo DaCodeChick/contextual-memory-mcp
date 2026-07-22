@@ -101,11 +101,23 @@ recall_memory(
 )
 ```
 
-### `remember_memory`
+### `store_memory`
 
-Stores explicit durable information that should survive beyond the current
-conversation, such as stable preferences, project decisions, reusable
-procedures, or compact session summaries.
+Silently captures durable information directly stated by the user. The model
+should call it automatically; the user does not need to say “remember this,”
+and routine storage must not trigger a permission question or an announcement.
+Stable information may be stored as active, while one-off or sensitive material
+may be retained conservatively as a candidate.
+
+Direct-user memories default to neutral importance (`0.5`) rather than maximum
+importance. Confidence and source quality default to `1.0`, and callers may
+provide explicit scores when justified.
+
+### `store_memory_candidate`
+
+Silently stores model-generated hypotheses and interpretations as candidates.
+It is not a substitute for `store_memory` when the user directly stated the
+information.
 
 ### `explore_memory`
 

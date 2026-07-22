@@ -1,25 +1,43 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
 
 from core.enums import MemoryOrigin, MemoryState, MemoryType
-from pathlib import Path
-
 from core.memory_matrix import ContextualMemoryMatrix
 from core.stores import MemoryStoreConfig, StoreMode
 
 
-mcp = FastMCP(
-    "Contextual Memory",
-    instructions=(
-        "Use recall_memory whenever stored context may help answer the "
-        "user's request. The result is source-attributed Markdown intended "
-        "to be read and incorporated into the current response. Use "
-        "remember_memory only for durable information worth retaining "
-        "beyond the current conversation. Do not store transient chatter, "
-        "secrets, or information the user did not intend to preserve."
-    ),
-)
+MCP_INSTRUCTIONS = """
+Use recall_memory whenever stored context may help answer the user's request.
+
+Silently and automatically call store_memory when the user provides durable
+information that could improve future conversations. The user does not need to
+say "remember this", and you must not ask for permission merely because a fact
+may be stored. Memory capture is an internal action and should not interrupt or
+be announced in the conversational response.
+
+Store direct user statements as EXPLICIT_USER memories. Stable identity,
+preferences, relationships, ongoing projects, durable decisions, recurring
+constraints, significant autobiographical facts, and reusable procedures are
+normally ACTIVE. One-off anecdotes, uncertain relevance, sensitive personal
+history, and facts that may need reinforcement may be stored as CANDIDATE
+instead of being discarded or subjected to a permission prompt.
+
+Use store_memory_candidate for model inferences, interpretations, guesses, or
+other information not directly stated by the user. Never present an inference
+as a direct user statement.
+
+Do not store transient chatter, authentication secrets, financial credentials,
+private keys, session tokens, or information the user explicitly asks not to
+retain. Do not equate emotional intensity with retrieval importance. Sensitive
+memories should generally use conservative importance and CANDIDATE state unless
+clear long-term relevance supports activation.
+""".strip()
+
+
+mcp = FastMCP("Contextual Memory", instructions=MCP_INSTRUCTIONS)
 memory = ContextualMemoryMatrix()
 
 
@@ -57,40 +75,64 @@ def recall_memory(
 
 
 @mcp.tool()
-def remember_memory(
+def store_memory(
     target_store: str,
     title: str,
     content: str,
     concepts: list[str] | None = None,
+    memory_state: int = int(MemoryState.ACTIVE),
     memory_type: int = int(MemoryType.UNKNOWN),
+    importance: float | None = None,
+    confidence: float | None = None,
+    source_quality: float | None = None,
 ) -> dict:
-    """Store an explicit durable memory for later conversations.
+    """Silently capture durable information directly stated by the user.
 
-    Use this only when information should remain available long-term, such
-    as a stable user preference, project decision, reusable procedure,
-    confirmed fact, or compact session summary.
+    Call this automatically when the current user message contains information
+    that may improve future conversations. The user does not need to request
+    storage, and you must not ask permission solely to call this tool. Continue
+    the conversation normally after the call without announcing routine storage.
+
+    Use ACTIVE for stable, clearly durable facts and preferences. Use CANDIDATE
+    for one-off anecdotes, uncertain future relevance, or sensitive history that
+    should be retained conservatively. This tool always records EXPLICIT_USER
+    origin; use store_memory_candidate for model-generated inferences.
 
     Args:
+        target_store:
+            Explicit writable store receiving the memory.
         title:
             A concise descriptive title.
         content:
-            The complete memory in clear standalone Markdown.
+            A complete standalone statement preserving what the user said.
         concepts:
-            Optional normalized topics that should connect this memory to
-            related material in the knowledge graph.
+            Optional normalized topics connecting related memories.
+        memory_state:
+            0 candidate, 1 active, 2 archived, or 3 rejected.
         memory_type:
-            Integer MemoryType value: 0 unknown, 1 preference, 2 fact,
-            3 relationship, 4 project, 5 skill, 6 procedure,
-            7 observation, or 8 inference.
+            0 unknown, 1 preference, 2 fact, 3 relationship, 4 project,
+            5 skill, 6 procedure, 7 observation, or 8 inference.
+        importance:
+            Expected future contextual usefulness from 0.0 to 2.0. Omit for
+            the configured neutral automatic-memory default.
+        confidence:
+            Confidence that the statement is represented correctly, from 0.0
+            to 1.0. Direct user statements normally use 1.0.
+        source_quality:
+            Reliability of the source from 0.0 to 1.0. Direct first-person
+            statements normally use 1.0.
     """
     return memory.remember(
         target_store=target_store,
         title=title,
         text=content,
         concepts=concepts,
-        memory_state=MemoryState.ACTIVE,
+        memory_state=memory_state,
         memory_type=memory_type,
         memory_origin=MemoryOrigin.EXPLICIT_USER,
+        importance=importance,
+        confidence=confidence,
+        source_quality=source_quality,
     )
 
 
@@ -101,11 +143,16 @@ def store_memory_candidate(
     content: str,
     concepts: list[str] | None = None,
     memory_type: int = int(MemoryType.INFERENCE),
+    importance: float | None = None,
+    confidence: float = 0.5,
+    source_quality: float = 0.7,
 ) -> dict:
-    """Store a proposed memory without making it eligible for recall.
+    """Silently store a model inference as a non-recallable candidate.
 
-    Use this for model-inferred or automatically extracted information that
-    may be durable but should be reviewed or reinforced before activation.
+    Call this automatically for useful interpretations, hypotheses, or inferred
+    context that the user did not directly state. Do not ask permission merely
+    to retain the candidate, and never use this tool to rewrite a direct user
+    statement as though it were a model inference.
 
     Args:
         title:
@@ -125,6 +172,9 @@ def store_memory_candidate(
         memory_state=MemoryState.CANDIDATE,
         memory_type=memory_type,
         memory_origin=MemoryOrigin.MODEL_INFERENCE,
+        importance=importance,
+        confidence=confidence,
+        source_quality=source_quality,
     )
 
 

@@ -190,6 +190,9 @@ class IngestionService:
         memory_state: int | MemoryState = MemoryState.ACTIVE,
         memory_type: int | MemoryType = MemoryType.UNKNOWN,
         memory_origin: int | MemoryOrigin = MemoryOrigin.EXPLICIT_USER,
+        importance: float | None = None,
+        confidence: float | None = None,
+        source_quality: float | None = None,
     ) -> dict:
         source_id = stable_id("mem", title)
         doc = SourceDocument(
@@ -210,10 +213,32 @@ class IngestionService:
         state = coerce_enum(MemoryState, memory_state)
         kind = coerce_enum(MemoryType, memory_type)
         origin = coerce_enum(MemoryOrigin, memory_origin)
+        importance_value = (
+            self.settings.automatic_memory_importance
+            if importance is None else importance
+        )
+        confidence_value = (
+            self.settings.automatic_memory_confidence
+            if confidence is None else confidence
+        )
+        source_quality_value = (
+            self.settings.automatic_memory_source_quality
+            if source_quality is None else source_quality
+        )
+        if not 0.0 <= importance_value <= 2.0:
+            raise ValueError("importance must be between 0.0 and 2.0")
+        if not 0.0 <= confidence_value <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        if not 0.0 <= source_quality_value <= 1.0:
+            raise ValueError("source_quality must be between 0.0 and 1.0")
+
         for segment in segments:
             segment.memory_state = state
             segment.memory_type = kind
             segment.memory_origin = origin
+            segment.importance = importance_value
+            segment.confidence = confidence_value
+            segment.source_quality = source_quality_value
 
         if concepts:
             normalized = [
@@ -246,4 +271,7 @@ class IngestionService:
             "memory_type_name": kind.name,
             "memory_origin": int(origin),
             "memory_origin_name": origin.name,
+            "importance": importance_value,
+            "confidence": confidence_value,
+            "source_quality": source_quality_value,
         }
