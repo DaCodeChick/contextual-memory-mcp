@@ -77,14 +77,8 @@ def recall_memory(
 @mcp.tool()
 def store_memory(
     target_store: str,
-    title: str,
     content: str,
-    concepts: list[str] | None = None,
-    memory_state: int = int(MemoryState.ACTIVE),
-    memory_type: int = int(MemoryType.UNKNOWN),
-    importance: float | None = None,
-    confidence: float | None = None,
-    source_quality: float | None = None,
+    concepts: list[str] | None = None
 ) -> dict:
     """Silently capture durable information directly stated by the user.
 
@@ -93,59 +87,26 @@ def store_memory(
     storage, and you must not ask permission solely to call this tool. Continue
     the conversation normally after the call without announcing routine storage.
 
-    Use ACTIVE for stable, clearly durable facts and preferences. Use CANDIDATE
-    for one-off anecdotes, uncertain future relevance, or sensitive history that
-    should be retained conservatively. This tool always records EXPLICIT_USER
-    origin; use store_memory_candidate for model-generated inferences.
-
     Args:
         target_store:
             Explicit writable store receiving the memory.
-        title:
-            A concise descriptive title.
         content:
             A complete standalone statement preserving what the user said.
         concepts:
             Optional normalized topics connecting related memories.
-        memory_state:
-            0 candidate, 1 active, 2 archived, or 3 rejected.
-        memory_type:
-            0 unknown, 1 preference, 2 fact, 3 relationship, 4 project,
-            5 skill, 6 procedure, 7 observation, or 8 inference.
-        importance:
-            Expected future contextual usefulness from 0.0 to 2.0. Omit for
-            the configured neutral automatic-memory default.
-        confidence:
-            Confidence that the statement is represented correctly, from 0.0
-            to 1.0. Direct user statements normally use 1.0.
-        source_quality:
-            Reliability of the source from 0.0 to 1.0. Direct first-person
-            statements normally use 1.0.
     """
     return memory.remember(
         target_store=target_store,
-        title=title,
         text=content,
         concepts=concepts,
-        memory_state=memory_state,
-        memory_type=memory_type,
-        memory_origin=MemoryOrigin.EXPLICIT_USER,
-        importance=importance,
-        confidence=confidence,
-        source_quality=source_quality,
     )
 
 
 @mcp.tool()
 def store_memory_candidate(
     target_store: str,
-    title: str,
     content: str,
-    concepts: list[str] | None = None,
-    memory_type: int = int(MemoryType.INFERENCE),
-    importance: float | None = None,
-    confidence: float = 0.5,
-    source_quality: float = 0.7,
+    concepts: list[str] | None = None
 ) -> dict:
     """Silently store a model inference as a non-recallable candidate.
 
@@ -161,20 +122,12 @@ def store_memory_candidate(
             The proposed memory in standalone form.
         concepts:
             Optional normalized graph concepts.
-        memory_type:
-            Integer MemoryType value. Inference (8) is the default.
     """
     return memory.remember(
         target_store=target_store,
-        title=title,
         text=content,
         concepts=concepts,
-        memory_state=MemoryState.CANDIDATE,
-        memory_type=memory_type,
-        memory_origin=MemoryOrigin.MODEL_INFERENCE,
-        importance=importance,
-        confidence=confidence,
-        source_quality=source_quality,
+        memory_origin=MemoryOrigin.MODEL_INFERENCE
     )
 
 
