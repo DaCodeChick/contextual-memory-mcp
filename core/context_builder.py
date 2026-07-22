@@ -49,6 +49,7 @@ class ContextBuilder:
             block = (
                 f"## Memory {index}: {hit.title}{heading}\n"
                 f"Source: `{hit.source_path}`\n"
+                f"Memory ID: `{hit.segment_id}`\n"
                 f"Relevance: {score}\n"
                 + (
                     f"Concepts: {', '.join(hit.concepts[:10])}\n"

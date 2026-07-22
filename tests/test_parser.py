@@ -12,3 +12,5 @@ def test_heading_aware_segmentation() -> None:
     assert segments[1].heading == "Reference Rules"
     assert "reference rules" in segments[1].concepts
     assert segments[1].importance > 1.0
+    assert segments[1].identity_key == "section:1:chunk:0"
+    assert segments[1].content_hash == content_hash(segments[1].text)

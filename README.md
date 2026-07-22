@@ -86,7 +86,7 @@ not exposed to the model through MCP.
 uv run contextual-memory-mcp
 ```
 
-The MCP server exposes three model-facing tools:
+The MCP server exposes model-facing recall, ingestion, lifecycle, and maintenance tools:
 
 ### `recall_memory`
 
@@ -176,3 +176,30 @@ on first use.
 
 The returned value is Markdown rather than an embedding blob or database
 record, so the model receives reusable source material directly.
+
+
+## Memory importance and lifecycle
+
+Memory importance is persistent and evolves through an explicit maintenance pass:
+
+```text
+new recall accesses
+      +
+configured access gain
+      -
+elapsed inactivity decay
+      |
+      v
+updated importance
+      |
+      v
+promotion / archival policy
+```
+
+Run `run_memory_maintenance` through MCP to reinforce accessed memories, decay
+inactive unpinned memories, synchronize vector metadata, and then evaluate
+candidate promotion or active-memory archival. Pass `dry_run=true` to inspect
+all proposed changes without mutating storage.
+
+All state, type, origin, lifecycle-reason, and importance-reason enums are
+stored as SQLite integers and exposed in Python as `IntEnum` values.

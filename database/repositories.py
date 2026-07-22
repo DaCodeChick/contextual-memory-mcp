@@ -7,7 +7,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Sequence
 
+from core.enums import (
+    ImportanceReason,
+    LifecycleReason,
+    MemoryOrigin,
+    MemoryState,
+    MemoryType,
+    coerce_enum,
+)
+from core.importance import ImportanceDecision
+from core.lifecycle import LifecycleDecision
 from core.models import MemorySegment, SourceDocument
+from database.migrations import apply_migrations
 from database.schema import SCHEMA
 
 
@@ -27,6 +38,11 @@ class SQLiteRepository:
     def connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path)
         db.row_factory = sqlite3.Row
+        db.create_function(
+            "sha256_text",
+            1,
+            lambda value: hashlib.sha256(str(value).encode("utf-8")).hexdigest(),
+        )
         db.execute("PRAGMA foreign_keys=ON")
         try:
             yield db
@@ -40,6 +56,7 @@ class SQLiteRepository:
     def initialize(self) -> None:
         with self.connect() as db:
             db.executescript(SCHEMA)
+            apply_migrations(db)
 
     def clear(self) -> None:
         with self.connect() as db:
@@ -78,27 +95,51 @@ class SQLiteRepository:
             )
             return {str(row[0]) for row in rows}
 
-    def replace_document(
+    def reconcile_document(
         self,
         doc: SourceDocument,
         segments: Sequence[MemorySegment],
         source_kind: str = "file",
-    ) -> None:
+    ) -> dict[str, list[str]]:
+        """Reconcile scanner-owned content while preserving segment identity.
+
+        Existing rows are updated in place by ``identity_key``. This is the
+        foundation for preserving future learned state such as pinning and
+        access history across rescans.
+        """
         with self.connect() as db:
-            old = db.execute(
-                "SELECT segment_id FROM segments WHERE source_id=?",
+            existing_rows = db.execute(
+                """
+                SELECT segment_id, identity_key, content_hash
+                FROM segments
+                WHERE source_id=?
+                """,
                 (doc.source_id,),
             ).fetchall()
-            db.executemany(
-                "DELETE FROM segments_fts WHERE segment_id=?",
-                [(row[0],) for row in old],
-            )
+            existing = {str(row["identity_key"]): row for row in existing_rows}
+            incoming_keys = {segment.identity_key for segment in segments}
+
+            deleted_ids = [
+                str(row["segment_id"])
+                for key, row in existing.items()
+                if key not in incoming_keys
+            ]
+
             db.execute(
-                "DELETE FROM sources WHERE source_id=?",
-                (doc.source_id,),
-            )
-            db.execute(
-                "INSERT INTO sources VALUES(?,?,?,?,?,?,?,?)",
+                """
+                INSERT INTO sources(
+                    source_id, source_path, title, content_hash, modified_ns,
+                    size_bytes, source_kind, indexed_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    source_path=excluded.source_path,
+                    title=excluded.title,
+                    content_hash=excluded.content_hash,
+                    modified_ns=excluded.modified_ns,
+                    size_bytes=excluded.size_bytes,
+                    source_kind=excluded.source_kind,
+                    indexed_at=excluded.indexed_at
+                """,
                 (
                     doc.source_id,
                     doc.relative_path,
@@ -111,20 +152,85 @@ class SQLiteRepository:
                 ),
             )
 
-            for segment in segments:
-                db.execute(
-                    "INSERT INTO segments VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        segment.segment_id,
-                        segment.source_id,
-                        segment.ordinal,
-                        segment.heading,
-                        segment.text,
-                        segment.char_start,
-                        segment.char_end,
-                        segment.importance,
-                    ),
+            if deleted_ids:
+                db.executemany(
+                    "DELETE FROM segments_fts WHERE segment_id=?",
+                    [(segment_id,) for segment_id in deleted_ids],
                 )
+                marks = ",".join("?" for _ in deleted_ids)
+                db.execute(
+                    f"DELETE FROM segments WHERE segment_id IN ({marks})",
+                    tuple(deleted_ids),
+                )
+
+            # Rebuild source-owned search/concept projections. Segment rows are
+            # preserved and updated in place, so future learned columns survive.
+            source_segment_ids = [
+                str(row[0])
+                for row in db.execute(
+                    "SELECT segment_id FROM segments WHERE source_id=?",
+                    (doc.source_id,),
+                )
+            ]
+            if source_segment_ids:
+                db.executemany(
+                    "DELETE FROM segments_fts WHERE segment_id=?",
+                    [(segment_id,) for segment_id in source_segment_ids],
+                )
+                marks = ",".join("?" for _ in source_segment_ids)
+                db.execute(
+                    f"DELETE FROM segment_concepts WHERE segment_id IN ({marks})",
+                    tuple(source_segment_ids),
+                )
+
+            inserted_ids: list[str] = []
+            updated_ids: list[str] = []
+            unchanged_ids: list[str] = []
+
+            for segment in segments:
+                old = existing.get(segment.identity_key)
+                if old is None:
+                    db.execute(
+                        """
+                        INSERT INTO segments(
+                            segment_id, source_id, ordinal, heading, text,
+                            char_start, char_end, importance, confidence,
+                            source_quality, memory_state, memory_type,
+                            memory_origin, identity_key, content_hash,
+                            importance_updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            segment.segment_id, segment.source_id,
+                            segment.ordinal, segment.heading, segment.text,
+                            segment.char_start, segment.char_end,
+                            segment.importance, segment.confidence,
+                            segment.source_quality, int(segment.memory_state),
+                            int(segment.memory_type), int(segment.memory_origin),
+                            segment.identity_key, segment.content_hash, now(),
+                        ),
+                    )
+                    inserted_ids.append(segment.segment_id)
+                else:
+                    persistent_id = str(old["segment_id"])
+                    segment.segment_id = persistent_id
+                    db.execute(
+                        """
+                        UPDATE segments SET
+                            ordinal=?, heading=?, text=?, char_start=?,
+                            char_end=?, content_hash=?
+                        WHERE segment_id=?
+                        """,
+                        (
+                            segment.ordinal, segment.heading, segment.text,
+                            segment.char_start, segment.char_end,
+                            segment.content_hash, persistent_id,
+                        ),
+                    )
+                    if str(old["content_hash"]) == segment.content_hash:
+                        unchanged_ids.append(persistent_id)
+                    else:
+                        updated_ids.append(persistent_id)
 
                 concept_ids: list[str] = []
                 for name in segment.concepts:
@@ -139,51 +245,65 @@ class SQLiteRepository:
                     )
                     db.execute(
                         "INSERT INTO segment_concepts VALUES(?,?,?,?)",
-                        (
-                            segment.segment_id,
-                            current_concept_id,
-                            "mentions",
-                            1.0,
-                        ),
+                        (segment.segment_id, current_concept_id, "mentions", 1.0),
                     )
 
                 db.execute(
                     "INSERT INTO segments_fts VALUES(?,?,?,?)",
                     (
-                        segment.segment_id,
-                        segment.text,
-                        segment.heading or "",
-                        " ".join(segment.concepts),
+                        segment.segment_id, segment.text,
+                        segment.heading or "", " ".join(segment.concepts),
                     ),
                 )
 
-                for index, left in enumerate(concept_ids):
-                    for right in concept_ids[index + 1:]:
-                        source_id, target_id = sorted((left, right))
-                        db.execute(
-                            """
-                            INSERT INTO concept_edges
-                            VALUES(?,?,'co_occurs',1.0,1)
-                            ON CONFLICT(
-                                source_concept_id,
-                                target_concept_id,
-                                relation
-                            )
-                            DO UPDATE SET
-                                evidence_count=evidence_count+1,
-                                weight=MIN(5.0,1.0+evidence_count*0.1)
-                            """,
-                            (source_id, target_id),
-                        )
-
+            self._rebuild_concept_edges(db)
             db.execute(
                 """
                 DELETE FROM concepts
-                WHERE concept_id NOT IN (
-                    SELECT concept_id FROM segment_concepts
-                )
+                WHERE concept_id NOT IN (SELECT concept_id FROM segment_concepts)
                 """
             )
+
+            return {
+                "inserted": inserted_ids,
+                "updated": updated_ids,
+                "unchanged": unchanged_ids,
+                "deleted": deleted_ids,
+            }
+
+    def replace_document(
+        self,
+        doc: SourceDocument,
+        segments: Sequence[MemorySegment],
+        source_kind: str = "file",
+    ) -> None:
+        """Compatibility wrapper for callers from the initial prototype."""
+        self.reconcile_document(doc, segments, source_kind=source_kind)
+
+    @staticmethod
+    def _rebuild_concept_edges(db: sqlite3.Connection) -> None:
+        db.execute("DELETE FROM concept_edges")
+        db.execute(
+            """
+            INSERT INTO concept_edges(
+                source_concept_id, target_concept_id, relation, weight,
+                evidence_count
+            )
+            SELECT
+                CASE WHEN a.concept_id < b.concept_id
+                     THEN a.concept_id ELSE b.concept_id END,
+                CASE WHEN a.concept_id < b.concept_id
+                     THEN b.concept_id ELSE a.concept_id END,
+                'co_occurs',
+                MIN(5.0, 1.0 + (COUNT(*) - 1) * 0.1),
+                COUNT(*)
+            FROM segment_concepts a
+            JOIN segment_concepts b
+              ON a.segment_id=b.segment_id
+             AND a.concept_id < b.concept_id
+            GROUP BY 1, 2
+            """
+        )
 
     def delete_source(self, path_or_id: str) -> tuple[bool, list[str]]:
         with self.connect() as db:
@@ -361,6 +481,8 @@ class SQLiteRepository:
     def source_metadata(
         self,
         segment_ids: Sequence[str],
+        *,
+        active_only: bool = False,
     ) -> dict[str, dict]:
         if not segment_ids:
             return {}
@@ -375,17 +497,305 @@ class SQLiteRepository:
                     s.heading,
                     s.text,
                     s.importance,
+                    s.confidence,
+                    s.source_quality,
+                    s.access_count,
+                    s.pinned,
+                    s.last_accessed_at,
+                    s.importance_access_count,
+                    s.importance_reason,
+                    s.importance_updated_at,
+                    s.memory_state,
+                    s.memory_type,
+                    s.memory_origin,
+                    s.lifecycle_reason,
+                    s.state_changed_at,
+                    s.promoted_at,
+                    s.archived_at,
                     d.source_path,
                     d.title,
                     d.indexed_at
                 FROM segments s
                 JOIN sources d ON d.source_id=s.source_id
                 WHERE s.segment_id IN ({marks})
+                  AND (?=0 OR s.memory_state=?)
                 """,
-                tuple(segment_ids),
+                (*segment_ids, 1 if active_only else 0, int(MemoryState.ACTIVE)),
             ).fetchall()
 
         return {str(row[0]): dict(row) for row in rows}
+
+    def set_segment_weighting(
+        self,
+        segment_id: str,
+        *,
+        importance: float | None = None,
+        confidence: float | None = None,
+        source_quality: float | None = None,
+        pinned: bool | None = None,
+    ) -> dict:
+        updates: list[str] = []
+        values: list[object] = []
+
+        for name, value, low, high in (
+            ("importance", importance, 0.0, 2.0),
+            ("confidence", confidence, 0.0, 1.0),
+            ("source_quality", source_quality, 0.0, 1.0),
+        ):
+            if value is None:
+                continue
+            numeric = float(value)
+            if not low <= numeric <= high:
+                raise ValueError(f"{name} must be between {low} and {high}")
+            updates.append(f"{name}=?")
+            values.append(numeric)
+
+        if pinned is not None:
+            updates.append("pinned=?")
+            values.append(1 if pinned else 0)
+
+        if not updates:
+            raise ValueError("At least one weighting field must be supplied")
+
+        if importance is not None:
+            updates.extend(["importance_reason=?", "importance_updated_at=?"])
+            values.extend([int(ImportanceReason.MANUAL), now()])
+
+        values.append(segment_id)
+        with self.connect() as db:
+            cursor = db.execute(
+                f"UPDATE segments SET {', '.join(updates)} WHERE segment_id=?",
+                tuple(values),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Unknown segment: {segment_id}")
+            row = db.execute(
+                """
+                SELECT segment_id, importance, confidence, source_quality,
+                       access_count, pinned, last_accessed_at,
+                       importance_access_count, importance_reason,
+                       importance_updated_at
+                FROM segments WHERE segment_id=?
+                """,
+                (segment_id,),
+            ).fetchone()
+        result = dict(row)
+        result["pinned"] = bool(result["pinned"])
+        return result
+
+    def importance_candidates(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT segment_id, importance, access_count,
+                       importance_access_count, pinned, memory_state,
+                       last_accessed_at, importance_reason,
+                       importance_updated_at
+                FROM segments
+                WHERE memory_state != ?
+                ORDER BY segment_id
+                """,
+                (int(MemoryState.REJECTED),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_importance_decision(
+        self,
+        decision: ImportanceDecision,
+        *,
+        changed_at: datetime | None = None,
+    ) -> dict:
+        timestamp = (changed_at or datetime.now(timezone.utc)).isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                """
+                UPDATE segments
+                SET importance=?, importance_access_count=?,
+                    importance_reason=?, importance_updated_at=?
+                WHERE segment_id=? AND importance=?
+                  AND importance_access_count=?
+                """,
+                (
+                    decision.target_importance,
+                    decision.target_evaluated_access_count,
+                    int(decision.reason_code),
+                    timestamp,
+                    decision.segment_id,
+                    decision.previous_importance,
+                    decision.previous_evaluated_access_count,
+                ),
+            )
+            if cursor.rowcount == 0:
+                row = db.execute(
+                    "SELECT segment_id FROM segments WHERE segment_id=?",
+                    (decision.segment_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown segment: {decision.segment_id}")
+                raise RuntimeError(
+                    "Importance metadata changed after evaluation; "
+                    "decision was not applied"
+                )
+        return self.source_metadata([decision.segment_id])[decision.segment_id]
+
+    def lifecycle_metadata(self, segment_id: str) -> dict:
+        with self.connect() as db:
+            row = db.execute(
+                """
+                SELECT segment_id, memory_state, memory_type, memory_origin,
+                       importance, confidence, source_quality, access_count,
+                       pinned, last_accessed_at,
+                       lifecycle_reason, state_changed_at, promoted_at,
+                       archived_at
+                FROM segments
+                WHERE segment_id=?
+                """,
+                (segment_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown segment: {segment_id}")
+        return dict(row)
+
+    def lifecycle_candidates(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT segment_id, memory_state, importance, confidence,
+                       source_quality, access_count, pinned, last_accessed_at,
+                       lifecycle_reason, state_changed_at, promoted_at,
+                       archived_at
+                FROM segments
+                WHERE memory_state IN (?, ?) OR pinned=1
+                ORDER BY segment_id
+                """,
+                (int(MemoryState.CANDIDATE), int(MemoryState.ACTIVE)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_lifecycle_decision(
+        self,
+        segment_id: str,
+        decision: LifecycleDecision,
+        *,
+        changed_at: datetime | None = None,
+    ) -> dict:
+        if not decision.changes_state:
+            return self.lifecycle_metadata(segment_id)
+
+        timestamp = (changed_at or datetime.now(timezone.utc)).isoformat()
+        promoted_at = (
+            timestamp if decision.target_state is MemoryState.ACTIVE else None
+        )
+        archived_at = (
+            timestamp if decision.target_state is MemoryState.ARCHIVED else None
+        )
+
+        with self.connect() as db:
+            cursor = db.execute(
+                """
+                UPDATE segments
+                SET memory_state=?, lifecycle_reason=?, state_changed_at=?,
+                    promoted_at=COALESCE(?, promoted_at),
+                    archived_at=COALESCE(?, archived_at)
+                WHERE segment_id=? AND memory_state=?
+                """,
+                (
+                    int(decision.target_state),
+                    int(decision.reason_code),
+                    timestamp,
+                    promoted_at,
+                    archived_at,
+                    segment_id,
+                    int(decision.current_state),
+                ),
+            )
+            if cursor.rowcount == 0:
+                row = db.execute(
+                    "SELECT memory_state FROM segments WHERE segment_id=?",
+                    (segment_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown segment: {segment_id}")
+                raise RuntimeError(
+                    "Lifecycle state changed after evaluation; "
+                    "decision was not applied"
+                )
+
+        return self.lifecycle_metadata(segment_id)
+
+    def set_segment_lifecycle(
+        self,
+        segment_id: str,
+        *,
+        memory_state: int | MemoryState | None = None,
+        memory_type: int | MemoryType | None = None,
+        memory_origin: int | MemoryOrigin | None = None,
+    ) -> dict:
+        updates: list[str] = []
+        values: list[object] = []
+
+        enum_fields = (
+            ("memory_state", memory_state, MemoryState),
+            ("memory_type", memory_type, MemoryType),
+            ("memory_origin", memory_origin, MemoryOrigin),
+        )
+        for name, value, enum_type in enum_fields:
+            if value is None:
+                continue
+            member = coerce_enum(enum_type, value)
+            updates.append(f"{name}=?")
+            values.append(int(member))
+
+        if not updates:
+            raise ValueError("At least one lifecycle field must be supplied")
+
+        if memory_state is not None:
+            updates.extend(["lifecycle_reason=?", "state_changed_at=?"])
+            values.extend([int(LifecycleReason.MANUAL), now()])
+
+        values.append(segment_id)
+        with self.connect() as db:
+            cursor = db.execute(
+                f"UPDATE segments SET {', '.join(updates)} WHERE segment_id=?",
+                tuple(values),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Unknown segment: {segment_id}")
+            row = db.execute(
+                """
+                SELECT segment_id, memory_state, memory_type, memory_origin,
+                       lifecycle_reason, state_changed_at, promoted_at,
+                       archived_at
+                FROM segments WHERE segment_id=?
+                """,
+                (segment_id,),
+            ).fetchone()
+
+        result = dict(row)
+        result["memory_state_name"] = MemoryState(
+            result["memory_state"]
+        ).name
+        result["memory_type_name"] = MemoryType(
+            result["memory_type"]
+        ).name
+        result["memory_origin_name"] = MemoryOrigin(
+            result["memory_origin"]
+        ).name
+        return result
+
+    def record_access(self, segment_ids: Sequence[str]) -> None:
+        if not segment_ids:
+            return
+        unique_ids = list(dict.fromkeys(segment_ids))
+        with self.connect() as db:
+            db.executemany(
+                """
+                UPDATE segments
+                SET access_count=access_count+1, last_accessed_at=?
+                WHERE segment_id=?
+                """,
+                [(now(), segment_id) for segment_id in unique_ids],
+            )
 
     def inspect_concept(
         self,

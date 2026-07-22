@@ -3,6 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.config import Settings
+from core.enums import (
+    MemoryOrigin,
+    MemoryState,
+    MemoryType,
+    coerce_enum,
+)
 from core.models import SourceDocument
 from database.repositories import SQLiteRepository
 from database.vector_memory import VectorMemory
@@ -160,8 +166,15 @@ class IngestionService:
                 self.settings.chunk_size,
                 self.settings.chunk_overlap,
             )
-            self.repository.replace_document(doc, segments)
-            self.vectors.replace_document(doc, segments)
+            for segment in segments:
+                segment.memory_state = MemoryState.ACTIVE
+                segment.memory_origin = MemoryOrigin.IMPORTED_FILE
+            changes = self.repository.reconcile_document(doc, segments)
+            self.vectors.upsert_document(
+                doc,
+                segments,
+                deleted_ids=changes["deleted"],
+            )
 
             summary["indexed"] += 1
             summary["segments"] += len(segments)
@@ -173,8 +186,12 @@ class IngestionService:
         title: str,
         text: str,
         concepts: list[str] | None = None,
+        *,
+        memory_state: int | MemoryState = MemoryState.ACTIVE,
+        memory_type: int | MemoryType = MemoryType.UNKNOWN,
+        memory_origin: int | MemoryOrigin = MemoryOrigin.EXPLICIT_USER,
     ) -> dict:
-        source_id = stable_id("mem", title, content_hash(text))
+        source_id = stable_id("mem", title)
         doc = SourceDocument(
             source_id=source_id,
             path=Path(f"memory://{source_id}"),
@@ -190,6 +207,13 @@ class IngestionService:
             self.settings.chunk_size,
             self.settings.chunk_overlap,
         )
+        state = coerce_enum(MemoryState, memory_state)
+        kind = coerce_enum(MemoryType, memory_type)
+        origin = coerce_enum(MemoryOrigin, memory_origin)
+        for segment in segments:
+            segment.memory_state = state
+            segment.memory_type = kind
+            segment.memory_origin = origin
 
         if concepts:
             normalized = [
@@ -202,14 +226,24 @@ class IngestionService:
                     dict.fromkeys(normalized + segment.concepts)
                 )
 
-        self.repository.replace_document(
+        changes = self.repository.reconcile_document(
             doc,
             segments,
             source_kind="memory",
         )
-        self.vectors.replace_document(doc, segments)
+        self.vectors.upsert_document(
+            doc,
+            segments,
+            deleted_ids=changes["deleted"],
+        )
 
         return {
             "source_id": source_id,
             "segments": len(segments),
+            "memory_state": int(state),
+            "memory_state_name": state.name,
+            "memory_type": int(kind),
+            "memory_type_name": kind.name,
+            "memory_origin": int(origin),
+            "memory_origin_name": origin.name,
         }

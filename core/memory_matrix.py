@@ -4,7 +4,11 @@ from functools import cached_property
 
 from core.config import Settings
 from core.context_builder import ContextBuilder
+from core.importance import ImportancePolicy
+from core.importance_service import ImportanceRunResult, ImportanceService
 from core.ingestion_service import IngestionService
+from core.lifecycle import LifecyclePolicy
+from core.lifecycle_service import LifecycleRunResult, LifecycleService
 from core.retrieval_engine import RetrievalEngine
 from database.repositories import SQLiteRepository
 from database.vector_memory import VectorMemory
@@ -52,6 +56,93 @@ class ContextualMemoryMatrix:
     @cached_property
     def context(self) -> ContextBuilder:
         return ContextBuilder(self.settings, self.retrieval)
+
+    @cached_property
+    def lifecycle(self) -> LifecycleService:
+        policy = LifecyclePolicy(
+            promotion_importance=(
+                self.settings.lifecycle_promotion_importance
+            ),
+            promotion_access_count=(
+                self.settings.lifecycle_promotion_access_count
+            ),
+            minimum_confidence=(
+                self.settings.lifecycle_minimum_confidence
+            ),
+            minimum_source_quality=(
+                self.settings.lifecycle_minimum_source_quality
+            ),
+            archive_importance=(
+                self.settings.lifecycle_archive_importance
+            ),
+            archive_after_days=(
+                self.settings.lifecycle_archive_after_days
+            ),
+        )
+        return LifecycleService(self.repository, policy)
+
+
+    @cached_property
+    def importance(self) -> ImportanceService:
+        policy = ImportancePolicy(
+            access_gain=self.settings.importance_access_gain,
+            decay_per_30_days=self.settings.importance_decay_per_30_days,
+            decay_grace_days=self.settings.importance_decay_grace_days,
+            minimum_importance=self.settings.importance_minimum,
+            maximum_importance=self.settings.importance_maximum,
+        )
+        return ImportanceService(self.repository, policy)
+
+    def run_importance(self, *, apply: bool = True) -> ImportanceRunResult:
+        result = self.importance.run(apply=apply)
+        if apply:
+            for segment_id in result.changed_segment_ids:
+                metadata = self.repository.source_metadata([segment_id])[segment_id]
+                self.vectors.update_weighting(
+                    segment_id,
+                    importance=float(metadata["importance"]),
+                )
+        return result
+
+    def run_maintenance(self, *, apply: bool = True) -> dict:
+        importance = self.run_importance(apply=apply)
+        lifecycle = self.run_lifecycle(apply=apply)
+        return {"importance": importance, "lifecycle": lifecycle}
+
+    def run_lifecycle(self, *, apply: bool = True) -> LifecycleRunResult:
+        result = self.lifecycle.run(apply=apply)
+        if apply:
+            for segment_id in result.changed_segment_ids:
+                metadata = self.repository.lifecycle_metadata(segment_id)
+                self.vectors.update_lifecycle(
+                    segment_id,
+                    memory_state=int(metadata["memory_state"]),
+                    memory_type=int(metadata["memory_type"]),
+                    memory_origin=int(metadata["memory_origin"]),
+                )
+        return result
+
+    def update_lifecycle(
+        self,
+        segment_id: str,
+        *,
+        memory_state: int | None = None,
+        memory_type: int | None = None,
+        memory_origin: int | None = None,
+    ) -> dict:
+        result = self.repository.set_segment_lifecycle(
+            segment_id,
+            memory_state=memory_state,
+            memory_type=memory_type,
+            memory_origin=memory_origin,
+        )
+        self.vectors.update_lifecycle(
+            segment_id,
+            memory_state=result["memory_state"],
+            memory_type=result["memory_type"],
+            memory_origin=result["memory_origin"],
+        )
+        return result
 
     def clear(self) -> dict:
         vector_count = self.vectors.count()

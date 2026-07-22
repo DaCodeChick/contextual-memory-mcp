@@ -51,6 +51,28 @@ class Settings(BaseSettings):
         le=200000,
     )
 
+    lifecycle_promotion_importance: float = Field(
+        default=1.5, ge=0.0, le=2.0
+    )
+    lifecycle_promotion_access_count: int = Field(default=3, ge=0)
+    lifecycle_minimum_confidence: float = Field(
+        default=0.6, ge=0.0, le=1.0
+    )
+    lifecycle_minimum_source_quality: float = Field(
+        default=0.5, ge=0.0, le=1.0
+    )
+    lifecycle_archive_importance: float = Field(
+        default=0.35, ge=0.0, le=2.0
+    )
+    lifecycle_archive_after_days: int = Field(default=90, ge=0)
+
+    importance_access_gain: float = Field(default=0.05, ge=0.0, le=2.0)
+    importance_decay_per_30_days: float = Field(default=0.05, ge=0.0, le=2.0)
+    importance_decay_grace_days: int = Field(default=30, ge=0)
+    importance_minimum: float = Field(default=0.0, ge=0.0, le=2.0)
+    importance_maximum: float = Field(default=2.0, ge=0.0, le=2.0)
+    ranking_recency_half_life_days: float = Field(default=45.0, gt=0.0)
+
     include_globs: CsvList = ["*.md", "*.txt", "*.prompt"]
     exclude_dirs: CsvList = [
         ".git",

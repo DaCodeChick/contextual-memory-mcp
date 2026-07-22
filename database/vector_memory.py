@@ -27,17 +27,14 @@ class VectorMemory:
             metadata={"hnsw:space": "cosine"},
         )
 
-    def replace_document(
+    def upsert_document(
         self,
         doc: SourceDocument,
         segments: Sequence[MemorySegment],
+        deleted_ids: Sequence[str] = (),
     ) -> None:
-        existing = self.collection.get(
-            where={"source_id": doc.source_id},
-            include=[],
-        )
-        if existing.get("ids"):
-            self.collection.delete(ids=existing["ids"])
+        if deleted_ids:
+            self.collection.delete(ids=list(deleted_ids))
 
         if not segments:
             return
@@ -55,7 +52,7 @@ class VectorMemory:
             ]
         )
 
-        self.collection.add(
+        self.collection.upsert(
             ids=[segment.segment_id for segment in segments],
             documents=documents,
             embeddings=embeddings,
@@ -66,20 +63,45 @@ class VectorMemory:
                     "title": doc.title,
                     "heading": segment.heading or "",
                     "importance": segment.importance,
+                    "content_hash": segment.content_hash,
+                    "memory_state": int(segment.memory_state),
+                    "memory_type": int(segment.memory_type),
+                    "memory_origin": int(segment.memory_origin),
                 }
                 for segment in segments
             ],
         )
 
-    def search(self, query: str, limit: int = 50) -> list[dict]:
+    def replace_document(
+        self,
+        doc: SourceDocument,
+        segments: Sequence[MemorySegment],
+    ) -> None:
+        existing = self.collection.get(
+            where={"source_id": doc.source_id},
+            include=[],
+        )
+        deleted_ids = existing.get("ids") or []
+        self.upsert_document(doc, segments, deleted_ids=deleted_ids)
+
+    def search(
+        self,
+        query: str,
+        limit: int = 50,
+        *,
+        memory_state: int | None = None,
+    ) -> list[dict]:
         if self.collection.count() == 0:
             return []
 
-        result = self.collection.query(
-            query_embeddings=[self.embedder.embed_query(query)],
-            n_results=min(limit, self.collection.count()),
-            include=["distances", "documents", "metadatas"],
-        )
+        query_args = {
+            "query_embeddings": [self.embedder.embed_query(query)],
+            "n_results": min(limit, self.collection.count()),
+            "include": ["distances", "documents", "metadatas"],
+        }
+        if memory_state is not None:
+            query_args["where"] = {"memory_state": int(memory_state)}
+        result = self.collection.query(**query_args)
 
         hits: list[dict] = []
         for index, segment_id in enumerate(result["ids"][0]):
@@ -93,6 +115,43 @@ class VectorMemory:
                 }
             )
         return hits
+
+    def update_lifecycle(
+        self,
+        segment_id: str,
+        *,
+        memory_state: int,
+        memory_type: int,
+        memory_origin: int,
+    ) -> None:
+        result = self.collection.get(
+            ids=[segment_id],
+            include=["metadatas"],
+        )
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        if not ids or not metadatas:
+            return
+
+        metadata = dict(metadatas[0])
+        metadata.update(
+            {
+                "memory_state": int(memory_state),
+                "memory_type": int(memory_type),
+                "memory_origin": int(memory_origin),
+            }
+        )
+        self.collection.update(ids=[segment_id], metadatas=[metadata])
+
+    def update_weighting(self, segment_id: str, *, importance: float) -> None:
+        result = self.collection.get(ids=[segment_id], include=["metadatas"])
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        if not ids or not metadatas:
+            return
+        metadata = dict(metadatas[0])
+        metadata["importance"] = float(importance)
+        self.collection.update(ids=[segment_id], metadatas=[metadata])
 
     def delete(self, segment_ids: Sequence[str]) -> None:
         if segment_ids:

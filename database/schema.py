@@ -22,7 +22,25 @@ CREATE TABLE IF NOT EXISTS segments (
     char_start INTEGER NOT NULL,
     char_end INTEGER NOT NULL,
     importance REAL NOT NULL DEFAULT 1.0,
-    UNIQUE(source_id, ordinal)
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source_quality REAL NOT NULL DEFAULT 1.0,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    last_accessed_at TEXT,
+    importance_access_count INTEGER NOT NULL DEFAULT 0,
+    importance_reason INTEGER NOT NULL DEFAULT 0,
+    importance_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    memory_state INTEGER NOT NULL DEFAULT 1,
+    memory_type INTEGER NOT NULL DEFAULT 0,
+    memory_origin INTEGER NOT NULL DEFAULT 0,
+    lifecycle_reason INTEGER NOT NULL DEFAULT 0,
+    state_changed_at TEXT,
+    promoted_at TEXT,
+    archived_at TEXT,
+    identity_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    UNIQUE(source_id, ordinal),
+    UNIQUE(source_id, identity_key)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
