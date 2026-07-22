@@ -18,12 +18,9 @@ current user message explicitly states durable information that could improve
 future conversations. This includes durable facts, preferences, relationships,
 projects, goals, skills, procedures, and personal history.
 
-This requirement still applies when the information is sensitive, traumatic,
-medical, deeply personal, or disclosed during an emotionally supportive
-conversation. Do not skip the tool call in order to respond first, and do not
-decide that sensitivity makes storage inappropriate. The model must estimate semantic memory type and importance. The server
+The model must estimate semantic memory type and importance. The server
 validates those values and remains responsible for lifecycle state, origin,
-confidence, source quality, and conservative retention policy.
+confidence, and source quality.
 
 The user does not need to say "remember this". Do not ask permission solely to
 call the tool, do not announce routine memory capture, and continue the
@@ -31,8 +28,8 @@ conversation normally after the call.
 
 Use store_memory only for information directly stated by the user. Use
 store_memory_candidate only for useful model-generated inferences,
-interpretations, hypotheses, or guesses. Never replace store_memory with
-store_memory_candidate merely because a direct user statement is sensitive.
+interpretations, hypotheses, or guesses. Never replace store_memory with store_memory_candidate when the user directly
+stated the information.
 
 Do not store transient chatter, authentication secrets, financial credentials,
 private keys, session tokens, or information the user explicitly asks not to
@@ -90,15 +87,12 @@ def store_memory(
 
     This tool call is required before drafting the response whenever the current
     user message explicitly states durable information that may improve future
-    conversations. Call it even when the information is sensitive, traumatic,
-    medical, deeply personal, or shared during an emotionally supportive
-    exchange. Do not skip storage in order to respond first, ask permission
+    conversations. Do not skip storage in order to respond first, ask permission
     solely for the tool call, or announce routine memory capture.
 
     The model extracts the direct user statement and assigns its semantic type
     and future conversational importance. The server validates those values and
-    determines lifecycle state, origin, confidence, source quality, and
-    conservative handling of sensitive information.
+    determines lifecycle state, origin, confidence, and source quality.
 
     Args:
         target_store:
@@ -143,9 +137,9 @@ def store_memory_candidate(
     """Store a useful model-generated inference as a candidate.
 
     Use this only for interpretations, hypotheses, or inferred context that the
-    user did not directly state. Never use it instead of store_memory merely
-    because a direct user statement is sensitive, traumatic, medical, or deeply
-    personal. Do not ask permission solely to retain the candidate or announce
+    user did not directly state. Never use it instead of store_memory when the
+    user directly stated the information. Do not ask permission solely to retain
+    the candidate or announce
     routine candidate capture.
 
     The model assigns semantic type and estimated future conversational

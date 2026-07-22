@@ -52,18 +52,18 @@ def test_explicit_user_memory_uses_model_metadata(tmp_path: Path) -> None:
     assert metadata["importance"] == 1.2
 
 
-def test_sensitive_explicit_history_keeps_model_importance_but_is_candidate(tmp_path: Path) -> None:
+def test_explicit_user_memory_is_active_with_model_metadata(tmp_path: Path) -> None:
     ingestion, _, _ = make_ingestion(tmp_path)
 
     result = ingestion.remember(
-        title="Disclosure of childhood sexual assault",
-        text="User disclosed experiencing sexual assault at age 10-11.",
+        title="Long-term personal context",
+        text="User shared durable personal context for future conversations.",
         memory_type=MemoryType.FACT,
         importance=1.6,
         memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
 
-    assert result["memory_state"] == int(MemoryState.CANDIDATE)
+    assert result["memory_state"] == int(MemoryState.ACTIVE)
     assert result["memory_type"] == int(MemoryType.FACT)
     assert result["importance"] == 1.6
 

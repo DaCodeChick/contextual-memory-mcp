@@ -105,19 +105,18 @@ recall_memory(
 
 Automatically captures durable information directly stated by the user. The
 model is instructed to call it before drafting its response whenever the current
-message contains durable information, including during sensitive, traumatic,
-medical, or emotionally supportive conversations. The user does not need to say
+message contains durable information, including during ordinary conversation. The user does not need to say
 “remember this,” and routine storage must not trigger a permission question or
 an announcement. The model supplies an integer memory type and a normalized
 importance score from 0.0 to 2.0. The server validates those values and assigns
 lifecycle state, origin, confidence, source quality, and conservative
-sensitive-information policy.
+server-owned lifecycle policy.
 
 ### `store_memory_candidate`
 
 Stores model-generated hypotheses and interpretations as candidate inferences.
 It is not a substitute for `store_memory` when the user directly stated the
-information, including when that statement is sensitive or traumatic. The
+information, whenever that statement is durable. The
 model supplies semantic type and importance, while the server assigns lifecycle
 state, origin, confidence, source quality, and conservative retention policy.
 

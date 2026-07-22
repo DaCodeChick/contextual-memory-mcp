@@ -33,37 +33,16 @@ class IngestionService:
 
     def _initial_memory_state(
         self,
-        title: str,
-        text: str,
         origin: MemoryOrigin,
     ) -> MemoryState:
-        """Choose server-owned lifecycle state only.
+        """Choose lifecycle state from the server-owned memory origin.
 
-        Model inferences are candidates. Direct user statements are active by
-        default, while sensitive personal history is staged conservatively as
-        a candidate. Semantic type and importance are supplied by the model.
+        Direct user statements are active. Model-generated inferences are
+        candidates. Semantic type and importance are supplied by the model.
         """
-        if origin == MemoryOrigin.MODEL_INFERENCE:
-            return MemoryState.CANDIDATE
-
-        combined = f"{title} {text}".casefold()
-        sensitive_markers = (
-            "sexual assault",
-            "sexual abuse",
-            "childhood abuse",
-            "domestic abuse",
-            "domestic violence",
-            "rape",
-            "molest",
-            "trauma",
-            "self-harm",
-            "suicide attempt",
-            "mental health diagnosis",
-            "medical diagnosis",
-        )
         return (
             MemoryState.CANDIDATE
-            if any(marker in combined for marker in sensitive_markers)
+            if origin == MemoryOrigin.MODEL_INFERENCE
             else MemoryState.ACTIVE
         )
 
@@ -244,7 +223,7 @@ class IngestionService:
             self.settings.chunk_overlap,
         )
         origin = coerce_enum(MemoryOrigin, memory_origin)
-        state = self._initial_memory_state(title, text, origin)
+        state = self._initial_memory_state(origin)
         kind = coerce_enum(MemoryType, memory_type)
         importance_value = max(0.0, min(2.0, float(importance)))
         confidence_value = self.settings.automatic_memory_confidence

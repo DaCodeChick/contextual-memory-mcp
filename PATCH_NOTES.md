@@ -25,22 +25,22 @@
   `store_memory`, whose server instructions require silent automatic capture of
   durable direct-user information.
 - Direct user statements can be stored as either active or candidate memories;
-  sensitive or one-off material no longer needs a conversational permission
+  special-case or one-off material no longer needs a conversational permission
   prompt merely to be retained conservatively.
 - Model-generated hypotheses remain separated through
   `store_memory_candidate` and use model-inference origin metadata.
 - Memory type and importance are now required model-supplied fields for both
   direct memories and inferred candidates.
 - Importance is normalized to the supported `0.0` to `2.0` range; lifecycle,
-  origin, confidence, source quality, and sensitive retention remain
+  origin, confidence, source quality, and retention policy remain
   server-owned.
 - Removed the previous server-side type and importance heuristics and their
   configuration settings without a compatibility path.
 
-## Sensitive direct-user memory policy
+## Direct-user memory policy
 
 - Fixed direct user memories always being stored as `ACTIVE`/`UNKNOWN`.
-- Sensitive personal history is now retained conservatively as `CANDIDATE`.
+- Direct user statements are retained as `ACTIVE`; model-generated inferences are retained as `CANDIDATE`.
 - Direct user memories now receive a server-assigned semantic type instead of
   defaulting unconditionally to `UNKNOWN`.
 - Model inferences remain `CANDIDATE`/`INFERENCE`.
@@ -48,8 +48,7 @@
 
 - Strengthened MCP server instructions so durable direct-user information is
   stored before the conversational response is drafted.
-- Explicitly forbids skipping `store_memory` because a disclosure is sensitive,
-  traumatic, medical, deeply personal, or part of a supportive conversation.
+- Requires `store_memory` for durable direct-user statements before drafting the response.
 - Clarified that `store_memory_candidate` must not replace `store_memory` for
-  sensitive information the user directly stated.
+  information the user directly stated.
 
