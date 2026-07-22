@@ -21,6 +21,17 @@ class LifecycleAction(IntEnum):
     ARCHIVE = 2
 
 
+class LifecycleReason(IntEnum):
+    """Auditable reason for the most recent lifecycle transition."""
+
+    NONE = 0
+    MANUAL = 1
+    PINNED = 2
+    IMPORTANCE = 3
+    REPEATED_ACCESS = 4
+    INACTIVITY = 5
+
+
 class MemoryType(IntEnum):
     """Domain-independent semantic category for a memory."""
 

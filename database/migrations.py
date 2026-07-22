@@ -111,10 +111,35 @@ def migration_0003_memory_lifecycle(db: sqlite3.Connection) -> None:
     )
 
 
+def migration_0004_lifecycle_audit_metadata(db: sqlite3.Connection) -> None:
+    columns = _column_names(db, "segments")
+    additions = {
+        "lifecycle_reason": "INTEGER NOT NULL DEFAULT 0",
+        "state_changed_at": "TEXT",
+        "promoted_at": "TEXT",
+        "archived_at": "TEXT",
+    }
+    for column, declaration in additions.items():
+        if column not in columns:
+            db.execute(
+                f"ALTER TABLE segments ADD COLUMN {column} {declaration}"
+            )
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_lifecycle_reason "
+        "ON segments(lifecycle_reason)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_state_changed_at "
+        "ON segments(state_changed_at)"
+    )
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "segment identity and content hashes", migration_0001_identity_and_hashes),
     (2, "persistent memory weighting", migration_0002_memory_weighting),
     (3, "integer-backed memory lifecycle", migration_0003_memory_lifecycle),
+    (4, "lifecycle audit metadata", migration_0004_lifecycle_audit_metadata),
 ]
 
 

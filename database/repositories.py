@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from core.enums import (
+    LifecycleReason,
     MemoryOrigin,
     MemoryState,
     MemoryType,
     coerce_enum,
 )
+from core.lifecycle import LifecycleDecision
 from core.models import MemorySegment, SourceDocument
 from database.migrations import apply_migrations
 from database.schema import SCHEMA
@@ -500,6 +502,10 @@ class SQLiteRepository:
                     s.memory_state,
                     s.memory_type,
                     s.memory_origin,
+                    s.lifecycle_reason,
+                    s.state_changed_at,
+                    s.promoted_at,
+                    s.archived_at,
                     d.source_path,
                     d.title,
                     d.indexed_at
@@ -565,6 +571,90 @@ class SQLiteRepository:
         result["pinned"] = bool(result["pinned"])
         return result
 
+    def lifecycle_metadata(self, segment_id: str) -> dict:
+        with self.connect() as db:
+            row = db.execute(
+                """
+                SELECT segment_id, memory_state, importance, confidence,
+                       source_quality, access_count, pinned, last_accessed_at,
+                       lifecycle_reason, state_changed_at, promoted_at,
+                       archived_at
+                FROM segments
+                WHERE segment_id=?
+                """,
+                (segment_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown segment: {segment_id}")
+        return dict(row)
+
+    def lifecycle_candidates(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT segment_id, memory_state, importance, confidence,
+                       source_quality, access_count, pinned, last_accessed_at,
+                       lifecycle_reason, state_changed_at, promoted_at,
+                       archived_at
+                FROM segments
+                WHERE memory_state IN (?, ?) OR pinned=1
+                ORDER BY segment_id
+                """,
+                (int(MemoryState.CANDIDATE), int(MemoryState.ACTIVE)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_lifecycle_decision(
+        self,
+        segment_id: str,
+        decision: LifecycleDecision,
+        *,
+        changed_at: datetime | None = None,
+    ) -> dict:
+        if not decision.changes_state:
+            return self.lifecycle_metadata(segment_id)
+
+        timestamp = (changed_at or datetime.now(timezone.utc)).isoformat()
+        promoted_at = (
+            timestamp if decision.target_state is MemoryState.ACTIVE else None
+        )
+        archived_at = (
+            timestamp if decision.target_state is MemoryState.ARCHIVED else None
+        )
+
+        with self.connect() as db:
+            cursor = db.execute(
+                """
+                UPDATE segments
+                SET memory_state=?, lifecycle_reason=?, state_changed_at=?,
+                    promoted_at=COALESCE(?, promoted_at),
+                    archived_at=COALESCE(?, archived_at)
+                WHERE segment_id=? AND memory_state=?
+                """,
+                (
+                    int(decision.target_state),
+                    int(decision.reason_code),
+                    timestamp,
+                    promoted_at,
+                    archived_at,
+                    segment_id,
+                    int(decision.current_state),
+                ),
+            )
+            if cursor.rowcount == 0:
+                row = db.execute(
+                    "SELECT memory_state FROM segments WHERE segment_id=?",
+                    (segment_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown segment: {segment_id}")
+                raise RuntimeError(
+                    "Lifecycle state changed after evaluation; "
+                    "decision was not applied"
+                )
+
+        return self.lifecycle_metadata(segment_id)
+
     def set_segment_lifecycle(
         self,
         segment_id: str,
@@ -591,6 +681,10 @@ class SQLiteRepository:
         if not updates:
             raise ValueError("At least one lifecycle field must be supplied")
 
+        if memory_state is not None:
+            updates.extend(["lifecycle_reason=?", "state_changed_at=?"])
+            values.extend([int(LifecycleReason.MANUAL), now()])
+
         values.append(segment_id)
         with self.connect() as db:
             cursor = db.execute(
@@ -601,7 +695,9 @@ class SQLiteRepository:
                 raise KeyError(f"Unknown segment: {segment_id}")
             row = db.execute(
                 """
-                SELECT segment_id, memory_state, memory_type, memory_origin
+                SELECT segment_id, memory_state, memory_type, memory_origin,
+                       lifecycle_reason, state_changed_at, promoted_at,
+                       archived_at
                 FROM segments WHERE segment_id=?
                 """,
                 (segment_id,),

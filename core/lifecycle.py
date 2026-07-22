@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from core.enums import LifecycleAction, MemoryState
+from core.enums import LifecycleAction, LifecycleReason, MemoryState
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +26,7 @@ class LifecycleDecision:
     action: LifecycleAction
     current_state: MemoryState
     target_state: MemoryState
+    reason_code: LifecycleReason
     reason: str
 
     @property
@@ -86,6 +87,7 @@ class LifecyclePolicy:
                 LifecycleAction.PROMOTE,
                 current,
                 MemoryState.ACTIVE,
+                LifecycleReason.PINNED,
                 "pinned memory is always eligible for active recall",
             )
 
@@ -124,6 +126,11 @@ class LifecyclePolicy:
                 LifecycleAction.PROMOTE,
                 MemoryState.CANDIDATE,
                 MemoryState.ACTIVE,
+                (
+                    LifecycleReason.IMPORTANCE
+                    if important
+                    else LifecycleReason.REPEATED_ACCESS
+                ),
                 reason,
             )
 
@@ -164,6 +171,7 @@ class LifecyclePolicy:
             LifecycleAction.ARCHIVE,
             MemoryState.ACTIVE,
             MemoryState.ARCHIVED,
+            LifecycleReason.INACTIVITY,
             "low-importance memory exceeded the inactivity window",
         )
 
@@ -173,5 +181,6 @@ class LifecyclePolicy:
             LifecycleAction.KEEP,
             state,
             state,
+            LifecycleReason.NONE,
             reason,
         )
