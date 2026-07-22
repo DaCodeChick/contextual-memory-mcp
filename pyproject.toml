@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prompt-memory-mcp"
+version = "0.1.0"
+description = "A Myriad-inspired persistent prompt memory MCP server"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.12,<3",
+  "chromadb>=0.5,<2",
+  "sentence-transformers>=3,<6",
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.2,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.6,<1"]
+
+[project.scripts]
+prompt-memory-mcp = "mcp_server.server:main"
+prompt-memory-index = "main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "database", "extraction", "providers", "mcp_server"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
