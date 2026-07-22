@@ -33,3 +33,11 @@
   instead of maximum importance (`1.0`). Confidence and source quality remain
   independently configurable.
 - Added explicit scoring validation and regression tests for the MCP policy.
+
+## Sensitive direct-user memory policy
+
+- Fixed direct user memories always being stored as `ACTIVE`/`UNKNOWN`.
+- Sensitive personal history is now retained conservatively as `CANDIDATE`.
+- Direct user memories now receive a server-assigned semantic type instead of
+  defaulting unconditionally to `UNKNOWN`.
+- Model inferences remain `CANDIDATE`/`INFERENCE`.

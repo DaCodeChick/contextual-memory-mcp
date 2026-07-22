@@ -54,6 +54,20 @@ def test_explicit_user_memory_uses_server_defaults(tmp_path: Path) -> None:
     assert metadata["source_quality"] == 1.0
 
 
+def test_sensitive_explicit_history_is_retained_as_candidate(tmp_path: Path) -> None:
+    ingestion, _, _ = make_ingestion(tmp_path)
+
+    result = ingestion.remember(
+        title="Disclosure of childhood sexual assault",
+        text="User disclosed experiencing sexual assault at age 10-11.",
+        memory_origin=MemoryOrigin.EXPLICIT_USER,
+    )
+
+    assert result["memory_state"] == int(MemoryState.CANDIDATE)
+    assert result["memory_type"] == int(MemoryType.FACT)
+    assert result["memory_origin"] == int(MemoryOrigin.EXPLICIT_USER)
+
+
 def test_model_inference_is_candidate_inference(tmp_path: Path) -> None:
     ingestion, _, _ = make_ingestion(tmp_path)
 

@@ -32,6 +32,112 @@ class IngestionService:
         self.vectors = vectors
 
     @staticmethod
+    def _initial_memory_policy(
+        title: str,
+        text: str,
+        origin: MemoryOrigin,
+    ) -> tuple[MemoryState, MemoryType]:
+        """Choose server-owned lifecycle and type metadata.
+
+        Direct user statements are active by default, but sensitive personal
+        history is retained conservatively as a candidate until it is
+        reinforced or manually promoted. Model inferences are always
+        candidates and are explicitly typed as inferences.
+        """
+        if origin == MemoryOrigin.MODEL_INFERENCE:
+            return MemoryState.CANDIDATE, MemoryType.INFERENCE
+
+        combined = f"{title} {text}".casefold()
+
+        sensitive_markers = (
+            "sexual assault",
+            "sexual abuse",
+            "childhood abuse",
+            "domestic abuse",
+            "domestic violence",
+            "rape",
+            "molest",
+            "trauma",
+            "self-harm",
+            "suicide attempt",
+            "mental health diagnosis",
+            "medical diagnosis",
+        )
+        state = (
+            MemoryState.CANDIDATE
+            if any(marker in combined for marker in sensitive_markers)
+            else MemoryState.ACTIVE
+        )
+
+        type_markers: tuple[tuple[MemoryType, tuple[str, ...]], ...] = (
+            (
+                MemoryType.PREFERENCE,
+                (
+                    "prefer",
+                    "preference",
+                    "favorite",
+                    "favourite",
+                    "likes ",
+                    "dislikes ",
+                ),
+            ),
+            (
+                MemoryType.RELATIONSHIP,
+                (
+                    "husband",
+                    "wife",
+                    "spouse",
+                    "partner",
+                    "mother",
+                    "father",
+                    "sister",
+                    "brother",
+                    "family",
+                ),
+            ),
+            (
+                MemoryType.PROJECT,
+                (
+                    "project",
+                    "repository",
+                    "codebase",
+                    "working on",
+                    "building",
+                    "developing",
+                ),
+            ),
+            (
+                MemoryType.SKILL,
+                (
+                    "skilled",
+                    "proficient",
+                    "experience with",
+                    "knows how to",
+                    "programming language",
+                ),
+            ),
+            (
+                MemoryType.PROCEDURE,
+                (
+                    "workflow",
+                    "procedure",
+                    "process",
+                    "steps to",
+                    "how to",
+                ),
+            ),
+            (
+                MemoryType.OBSERVATION,
+                ("noticed", "observed", "seems to", "appears to"),
+            ),
+        )
+        for memory_type, markers in type_markers:
+            if any(marker in combined for marker in markers):
+                return state, memory_type
+
+        return state, MemoryType.FACT
+
+    @staticmethod
     def _normalize_exclusions(
         root: Path,
         configured: list[str],
@@ -206,12 +312,7 @@ class IngestionService:
             self.settings.chunk_overlap,
         )
         origin = coerce_enum(MemoryOrigin, memory_origin)
-        if origin == MemoryOrigin.MODEL_INFERENCE:
-            state = MemoryState.CANDIDATE
-            kind = MemoryType.INFERENCE
-        else:
-            state = MemoryState.ACTIVE
-            kind = MemoryType.UNKNOWN
+        state, kind = self._initial_memory_policy(title, text, origin)
         importance_value = self.settings.automatic_memory_importance
         confidence_value = self.settings.automatic_memory_confidence
         source_quality_value = self.settings.automatic_memory_source_quality

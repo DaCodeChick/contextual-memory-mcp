@@ -25,7 +25,8 @@ stated by the user. Never present an inference as a direct user statement.
 Do not store transient chatter, authentication secrets, financial credentials,
 private keys, session tokens, or information the user explicitly asks not to
 retain. The server determines lifecycle state, type, importance, confidence, and
-source quality.
+source quality. Sensitive personal history is retained conservatively as a
+candidate instead of being immediately recallable.
 """.strip()
 
 
@@ -81,7 +82,8 @@ def store_memory(
     the conversation normally after the call without announcing routine storage.
 
     The server determines lifecycle state, memory type, importance, confidence,
-    source quality, and origin metadata.
+    source quality, and origin metadata. Sensitive personal history is retained
+    conservatively as a candidate instead of becoming immediately recallable.
 
     Args:
         target_store:
