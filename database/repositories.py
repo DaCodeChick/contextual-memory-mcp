@@ -299,26 +299,58 @@ class SQLiteRepository:
         if not seed_names:
             return {}
 
-        marks = ",".join("?" for _ in seed_names)
+        normalized_names = list(dict.fromkeys(seed_names))[:10]
+        marks = ",".join("?" for _ in normalized_names)
+
         with self.connect() as db:
             rows = db.execute(
                 f"""
-                SELECT DISTINCT sc.segment_id, MAX(e.weight) AS score
-                FROM concepts seed
-                JOIN concept_edges e
-                  ON seed.concept_id IN (
-                    e.source_concept_id,
-                    e.target_concept_id
-                  )
+                WITH seed_concepts AS (
+                    SELECT concept_id
+                    FROM concepts
+                    WHERE name IN ({marks})
+                ),
+                related_concepts AS (
+                    SELECT
+                        e.target_concept_id AS concept_id,
+                        e.weight AS weight
+                    FROM concept_edges e
+                    JOIN seed_concepts seed
+                    ON seed.concept_id = e.source_concept_id
+
+                    UNION ALL
+
+                    SELECT
+                        e.source_concept_id AS concept_id,
+                        e.weight AS weight
+                    FROM concept_edges e
+                    JOIN seed_concepts seed
+                    ON seed.concept_id = e.target_concept_id
+
+                    UNION ALL
+
+                    SELECT
+                        concept_id,
+                        5.0 AS weight
+                    FROM seed_concepts
+                ),
+                best_concept_scores AS (
+                    SELECT
+                        concept_id,
+                        MAX(weight) AS weight
+                    FROM related_concepts
+                    GROUP BY concept_id
+                )
+                SELECT
+                    sc.segment_id,
+                    MAX(scores.weight) AS score
+                FROM best_concept_scores scores
                 JOIN segment_concepts sc
-                  ON sc.concept_id IN (
-                    e.source_concept_id,
-                    e.target_concept_id
-                  )
-                WHERE seed.name IN ({marks})
+                ON sc.concept_id = scores.concept_id
                 GROUP BY sc.segment_id
+                LIMIT 5000
                 """,
-                tuple(seed_names),
+                tuple(normalized_names),
             ).fetchall()
 
         return {
