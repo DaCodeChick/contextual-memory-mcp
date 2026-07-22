@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from core.enums import (
+    ImportanceReason,
     LifecycleReason,
     MemoryOrigin,
     MemoryState,
     MemoryType,
     coerce_enum,
 )
+from core.importance import ImportanceDecision
 from core.lifecycle import LifecycleDecision
 from core.models import MemorySegment, SourceDocument
 from database.migrations import apply_migrations
@@ -194,8 +196,9 @@ class SQLiteRepository:
                             segment_id, source_id, ordinal, heading, text,
                             char_start, char_end, importance, confidence,
                             source_quality, memory_state, memory_type,
-                            memory_origin, identity_key, content_hash
-                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            memory_origin, identity_key, content_hash,
+                            importance_updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             segment.segment_id, segment.source_id,
@@ -204,7 +207,7 @@ class SQLiteRepository:
                             segment.importance, segment.confidence,
                             segment.source_quality, int(segment.memory_state),
                             int(segment.memory_type), int(segment.memory_origin),
-                            segment.identity_key, segment.content_hash,
+                            segment.identity_key, segment.content_hash, now(),
                         ),
                     )
                     inserted_ids.append(segment.segment_id)
@@ -499,6 +502,9 @@ class SQLiteRepository:
                     s.access_count,
                     s.pinned,
                     s.last_accessed_at,
+                    s.importance_access_count,
+                    s.importance_reason,
+                    s.importance_updated_at,
                     s.memory_state,
                     s.memory_type,
                     s.memory_origin,
@@ -551,6 +557,10 @@ class SQLiteRepository:
         if not updates:
             raise ValueError("At least one weighting field must be supplied")
 
+        if importance is not None:
+            updates.extend(["importance_reason=?", "importance_updated_at=?"])
+            values.extend([int(ImportanceReason.MANUAL), now()])
+
         values.append(segment_id)
         with self.connect() as db:
             cursor = db.execute(
@@ -562,7 +572,9 @@ class SQLiteRepository:
             row = db.execute(
                 """
                 SELECT segment_id, importance, confidence, source_quality,
-                       access_count, pinned, last_accessed_at
+                       access_count, pinned, last_accessed_at,
+                       importance_access_count, importance_reason,
+                       importance_updated_at
                 FROM segments WHERE segment_id=?
                 """,
                 (segment_id,),
@@ -570,6 +582,61 @@ class SQLiteRepository:
         result = dict(row)
         result["pinned"] = bool(result["pinned"])
         return result
+
+    def importance_candidates(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT segment_id, importance, access_count,
+                       importance_access_count, pinned, memory_state,
+                       last_accessed_at, importance_reason,
+                       importance_updated_at
+                FROM segments
+                WHERE memory_state != ?
+                ORDER BY segment_id
+                """,
+                (int(MemoryState.REJECTED),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_importance_decision(
+        self,
+        decision: ImportanceDecision,
+        *,
+        changed_at: datetime | None = None,
+    ) -> dict:
+        timestamp = (changed_at or datetime.now(timezone.utc)).isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                """
+                UPDATE segments
+                SET importance=?, importance_access_count=?,
+                    importance_reason=?, importance_updated_at=?
+                WHERE segment_id=? AND importance=?
+                  AND importance_access_count=?
+                """,
+                (
+                    decision.target_importance,
+                    decision.target_evaluated_access_count,
+                    int(decision.reason_code),
+                    timestamp,
+                    decision.segment_id,
+                    decision.previous_importance,
+                    decision.previous_evaluated_access_count,
+                ),
+            )
+            if cursor.rowcount == 0:
+                row = db.execute(
+                    "SELECT segment_id FROM segments WHERE segment_id=?",
+                    (decision.segment_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown segment: {decision.segment_id}")
+                raise RuntimeError(
+                    "Importance metadata changed after evaluation; "
+                    "decision was not applied"
+                )
+        return self.source_metadata([decision.segment_id])[decision.segment_id]
 
     def lifecycle_metadata(self, segment_id: str) -> dict:
         with self.connect() as db:

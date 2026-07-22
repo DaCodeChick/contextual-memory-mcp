@@ -21,6 +21,16 @@ class LifecycleAction(IntEnum):
     ARCHIVE = 2
 
 
+class ImportanceReason(IntEnum):
+    """Auditable reason for the most recent importance adjustment."""
+
+    NONE = 0
+    MANUAL = 1
+    ACCESS_REINFORCEMENT = 2
+    INACTIVITY_DECAY = 3
+    MIXED = 4
+
+
 class LifecycleReason(IntEnum):
     """Auditable reason for the most recent lifecycle transition."""
 

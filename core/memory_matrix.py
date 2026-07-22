@@ -4,6 +4,8 @@ from functools import cached_property
 
 from core.config import Settings
 from core.context_builder import ContextBuilder
+from core.importance import ImportancePolicy
+from core.importance_service import ImportanceRunResult, ImportanceService
 from core.ingestion_service import IngestionService
 from core.lifecycle import LifecyclePolicy
 from core.lifecycle_service import LifecycleRunResult, LifecycleService
@@ -78,6 +80,34 @@ class ContextualMemoryMatrix:
             ),
         )
         return LifecycleService(self.repository, policy)
+
+
+    @cached_property
+    def importance(self) -> ImportanceService:
+        policy = ImportancePolicy(
+            access_gain=self.settings.importance_access_gain,
+            decay_per_30_days=self.settings.importance_decay_per_30_days,
+            decay_grace_days=self.settings.importance_decay_grace_days,
+            minimum_importance=self.settings.importance_minimum,
+            maximum_importance=self.settings.importance_maximum,
+        )
+        return ImportanceService(self.repository, policy)
+
+    def run_importance(self, *, apply: bool = True) -> ImportanceRunResult:
+        result = self.importance.run(apply=apply)
+        if apply:
+            for segment_id in result.changed_segment_ids:
+                metadata = self.repository.source_metadata([segment_id])[segment_id]
+                self.vectors.update_weighting(
+                    segment_id,
+                    importance=float(metadata["importance"]),
+                )
+        return result
+
+    def run_maintenance(self, *, apply: bool = True) -> dict:
+        importance = self.run_importance(apply=apply)
+        lifecycle = self.run_lifecycle(apply=apply)
+        return {"importance": importance, "lifecycle": lifecycle}
 
     def run_lifecycle(self, *, apply: bool = True) -> LifecycleRunResult:
         result = self.lifecycle.run(apply=apply)

@@ -135,11 +135,31 @@ def migration_0004_lifecycle_audit_metadata(db: sqlite3.Connection) -> None:
     )
 
 
+def migration_0005_dynamic_importance(db: sqlite3.Connection) -> None:
+    columns = _column_names(db, "segments")
+    additions = {
+        "importance_access_count": "INTEGER NOT NULL DEFAULT 0",
+        "importance_reason": "INTEGER NOT NULL DEFAULT 0",
+        "importance_updated_at": "TEXT",
+    }
+    for column, declaration in additions.items():
+        if column not in columns:
+            db.execute(f"ALTER TABLE segments ADD COLUMN {column} {declaration}")
+    db.execute(
+        "UPDATE segments SET importance_updated_at=COALESCE(importance_updated_at, CURRENT_TIMESTAMP)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_importance_updated_at "
+        "ON segments(importance_updated_at)"
+    )
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "segment identity and content hashes", migration_0001_identity_and_hashes),
     (2, "persistent memory weighting", migration_0002_memory_weighting),
     (3, "integer-backed memory lifecycle", migration_0003_memory_lifecycle),
     (4, "lifecycle audit metadata", migration_0004_lifecycle_audit_metadata),
+    (5, "dynamic memory importance", migration_0005_dynamic_importance),
 ]
 
 

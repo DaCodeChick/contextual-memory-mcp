@@ -143,6 +143,16 @@ class VectorMemory:
         )
         self.collection.update(ids=[segment_id], metadatas=[metadata])
 
+    def update_weighting(self, segment_id: str, *, importance: float) -> None:
+        result = self.collection.get(ids=[segment_id], include=["metadatas"])
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        if not ids or not metadatas:
+            return
+        metadata = dict(metadatas[0])
+        metadata["importance"] = float(importance)
+        self.collection.update(ids=[segment_id], metadatas=[metadata])
+
     def delete(self, segment_ids: Sequence[str]) -> None:
         if segment_ids:
             self.collection.delete(ids=list(segment_ids))

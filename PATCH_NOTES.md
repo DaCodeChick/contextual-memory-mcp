@@ -1,26 +1,28 @@
-# Lifecycle Configuration and Vector Synchronization
+# Memory Importance Consolidation
 
-## Summary
+This patch completes the planned memory-importance lifecycle for the current branch.
 
-This patch integrates the repository-backed lifecycle service with the main
-memory facade and MCP server.
+## Implemented
 
-## Changes
-
-- Adds environment-configurable promotion and archival thresholds.
-- Adds `ContextualMemoryMatrix.lifecycle` using the configured policy.
-- Adds `ContextualMemoryMatrix.run_lifecycle()`.
-- Synchronizes applied lifecycle transitions into Chroma metadata.
-- Adds `run_memory_lifecycle` MCP tool with dry-run support.
-- Reports changed segment IDs from lifecycle passes.
-- Expands lifecycle metadata reads to include memory type and origin.
-- Adds tests for changed IDs, configured thresholds, and vector synchronization.
+- Persistent integer-backed importance audit reasons.
+- Migration-safe importance bookkeeping:
+  - `importance_access_count`
+  - `importance_reason`
+  - `importance_updated_at`
+- Configurable access reinforcement.
+- Configurable inactivity decay with a grace period, floor, ceiling, and pinned-memory protection.
+- Incremental decay that does not double-apply when maintenance runs repeatedly.
+- Optimistic concurrency checks for stale importance decisions.
+- A repository-backed `ImportanceService` with dry-run support.
+- A combined maintenance pass that applies importance changes before lifecycle promotion/archive decisions.
+- Chroma importance metadata synchronization.
+- Recency as an explainable ranking component.
+- Environment configuration for importance and recency policy.
+- MCP `run_memory_maintenance` tool.
+- Tests covering reinforcement, decay, pin protection, persistence, and dry runs.
 
 ## Validation
 
-- `23 passed`
+- `28 passed`
 - Python bytecode compilation passed.
-
-## Suggested commit
-
-`Integrate configurable lifecycle passes`
+- Ruff was not installed in the supplied environment.

@@ -72,6 +72,11 @@ class RetrievalEngine:
                 source_quality=source_quality,
                 access_count=access_count,
                 pinned=pinned,
+                last_accessed_at=row["last_accessed_at"],
+                indexed_at=row["indexed_at"],
+                recency_half_life_days=(
+                    self.settings.ranking_recency_half_life_days
+                ),
             )
 
             hits.append(

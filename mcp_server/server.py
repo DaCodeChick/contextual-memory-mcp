@@ -143,6 +143,37 @@ def update_memory_lifecycle(
 
 
 @mcp.tool()
+def run_memory_maintenance(dry_run: bool = False) -> dict:
+    """Reinforce/decay importance, then evaluate lifecycle transitions."""
+    result = memory.run_maintenance(apply=not dry_run)
+    importance = result["importance"]
+    lifecycle = result["lifecycle"]
+    return {
+        "importance": {
+            "evaluated": importance.evaluated,
+            "adjusted": importance.adjusted,
+            "changed_segment_ids": list(importance.changed_segment_ids),
+            "decisions": [
+                {
+                    "segment_id": decision.segment_id,
+                    "previous_importance": decision.previous_importance,
+                    "target_importance": decision.target_importance,
+                    "reason_code": int(decision.reason_code),
+                    "reason_code_name": decision.reason_code.name,
+                    "reason": decision.reason,
+                }
+                for decision in importance.decisions
+            ],
+        },
+        "lifecycle": {
+            "evaluated": lifecycle.evaluated,
+            "changed": lifecycle.changed,
+            "changed_segment_ids": list(lifecycle.changed_segment_ids),
+        },
+    }
+
+
+@mcp.tool()
 def run_memory_lifecycle(dry_run: bool = False) -> dict:
     """Evaluate automatic memory promotion and archival rules.
 
