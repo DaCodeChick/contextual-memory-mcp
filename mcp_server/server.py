@@ -12,6 +12,14 @@ from core.stores import MemoryStoreConfig, StoreMode
 MCP_INSTRUCTIONS = """
 Use recall_memory whenever stored context may help answer the user's request.
 
+REQUIRED STORE RESOLUTION:
+Before any memory write, determine the destination store. If a writable target
+store is not already explicitly established in the current conversation or
+tool context, call list_memory_stores first and choose from the returned stores.
+Never guess a store ID, never assume "main", and never wait for a failed write
+to discover valid values. Reuse a previously resolved target only while it
+remains unambiguous in the current context.
+
 REQUIRED AUTOMATIC MEMORY CAPTURE:
 Before drafting the conversational response, call store_memory whenever the
 current user message explicitly states durable information that could improve
@@ -96,7 +104,10 @@ def store_memory(
 
     Args:
         target_store:
-            Explicit writable store receiving the memory.
+            Explicit writable store receiving the memory. If the destination
+            is not already established in the current context, call
+            list_memory_stores before this tool. Never guess or assume a store
+            ID and never use a failed write to discover valid values.
         title:
             A concise, descriptive title for the stored memory.
         content:
@@ -148,7 +159,10 @@ def store_memory_candidate(
 
     Args:
         target_store:
-            Explicit writable store receiving the candidate.
+            Explicit writable store receiving the candidate. Call
+            list_memory_stores before this tool if the destination is not
+            already established in the current context. Never guess or assume
+            a store ID and never use a failed write to discover valid values.
         title:
             A concise, descriptive title for the inferred memory.
         content:
@@ -334,7 +348,13 @@ def explain_memory_ranking(
 
 @mcp.tool()
 def list_memory_stores() -> list[dict]:
-    """List mounted memory stores and their integer-backed access modes."""
+    """Resolve valid memory-store IDs and their access modes.
+
+    Call this before any memory write when the destination store is not already
+    explicitly established in the current conversation or tool context. Select
+    a writable enabled store from this result; do not guess a store ID or wait
+    for a write error to reveal valid values.
+    """
     return memory.list_stores()
 
 

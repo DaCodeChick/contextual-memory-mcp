@@ -234,7 +234,7 @@ Store modes are SQLite integers exposed through `StoreMode`:
 2 IMMUTABLE
 ```
 
-Writes require an explicit `target_store`; they are never broadcast.
+Writes require an explicit `target_store`; they are never broadcast. Before a write, clients must call `list_memory_stores` whenever the destination is not already established in the current context. Store IDs must not be guessed or discovered by intentionally causing a failed write.
 Maintenance runs only against writable stores. Read-only and immutable SQLite
 databases are opened with SQLite read-only URI modes and are never migrated
 automatically. Their recall access counts and user-specific ranking choices are

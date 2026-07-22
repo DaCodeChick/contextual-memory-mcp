@@ -126,3 +126,35 @@ def test_mcp_policy_assigns_type_and_importance_to_model() -> None:
     assert "model must estimate semantic memory type and importance" in instructions
     assert "server" in instructions.lower()
     assert "lifecycle state" in instructions
+
+
+def test_mcp_policy_requires_store_resolution_before_writes() -> None:
+    server_path = Path(__file__).parents[1] / "mcp_server" / "server.py"
+    module = ast.parse(server_path.read_text(encoding="utf-8"))
+    assignment = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "MCP_INSTRUCTIONS"
+            for target in node.targets
+        )
+    )
+    value = assignment.value
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+        value = value.func.value
+    instructions = ast.literal_eval(value).lower()
+
+    assert "call list_memory_stores first" in instructions
+    assert "never guess a store id" in instructions
+    assert "never assume \"main\"" in instructions
+    assert "failed write" in instructions
+
+
+def test_write_tools_require_prior_store_resolution_in_docs() -> None:
+    server_text = (Path(__file__).parents[1] / "mcp_server" / "server.py").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert server_text.count("list_memory_stores before this tool") >= 2
+    assert "resolve valid memory-store ids" in server_text
