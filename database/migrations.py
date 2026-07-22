@@ -45,8 +45,33 @@ def migration_0001_identity_and_hashes(db: sqlite3.Connection) -> None:
     )
 
 
+def migration_0002_memory_weighting(db: sqlite3.Connection) -> None:
+    columns = _column_names(db, "segments")
+    additions = {
+        "confidence": "REAL NOT NULL DEFAULT 1.0",
+        "source_quality": "REAL NOT NULL DEFAULT 1.0",
+        "access_count": "INTEGER NOT NULL DEFAULT 0",
+        "pinned": "INTEGER NOT NULL DEFAULT 0",
+        "last_accessed_at": "TEXT",
+    }
+    for column, declaration in additions.items():
+        if column not in columns:
+            db.execute(
+                f"ALTER TABLE segments ADD COLUMN {column} {declaration}"
+            )
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_pinned ON segments(pinned)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_access_count "
+        "ON segments(access_count)"
+    )
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "segment identity and content hashes", migration_0001_identity_and_hashes),
+    (2, "persistent memory weighting", migration_0002_memory_weighting),
 ]
 
 

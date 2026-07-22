@@ -30,6 +30,8 @@ class MemorySegment:
     content_hash: str
     importance: float = 1.0
     concepts: list[str] = field(default_factory=list)
+    confidence: float = 1.0
+    source_quality: float = 1.0
 
 
 # Compatibility alias for the first prompt-specific prototype.
@@ -49,5 +51,9 @@ class SearchHit:
     lexical_score: float
     graph_score: float
     importance: float
+    confidence: float
+    source_quality: float
+    access_count: int
+    pinned: bool
     concepts: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)

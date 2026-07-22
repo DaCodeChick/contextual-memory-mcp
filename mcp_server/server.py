@@ -101,6 +101,43 @@ def explore_memory(
     )
 
 
+@mcp.tool()
+def update_memory_weighting(
+    segment_id: str,
+    importance: float | None = None,
+    confidence: float | None = None,
+    source_quality: float | None = None,
+    pinned: bool | None = None,
+) -> dict:
+    """Update persistent ranking metadata for one memory segment.
+
+    Args:
+        segment_id:
+            The Memory ID returned by recall_memory.
+        importance:
+            Intrinsic importance from 0.0 to 2.0.
+        confidence:
+            Confidence in the memory from 0.0 to 1.0.
+        source_quality:
+            Reliability of the source from 0.0 to 1.0.
+        pinned:
+            Whether to give the memory an explicit ranking boost.
+    """
+    return memory.repository.set_segment_weighting(
+        segment_id,
+        importance=importance,
+        confidence=confidence,
+        source_quality=source_quality,
+        pinned=pinned,
+    )
+
+
+@mcp.tool()
+def explain_memory_ranking(query: str, top_k: int = 8) -> list[dict]:
+    """Explain how candidate memories were ranked for a query."""
+    return memory.retrieval.explain(query, top_k)
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 

@@ -184,15 +184,16 @@ class SQLiteRepository:
                         """
                         INSERT INTO segments(
                             segment_id, source_id, ordinal, heading, text,
-                            char_start, char_end, importance, identity_key,
-                            content_hash
-                        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                            char_start, char_end, importance, confidence,
+                            source_quality, identity_key, content_hash
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             segment.segment_id, segment.source_id,
                             segment.ordinal, segment.heading, segment.text,
                             segment.char_start, segment.char_end,
-                            segment.importance, segment.identity_key,
+                            segment.importance, segment.confidence,
+                            segment.source_quality, segment.identity_key,
                             segment.content_hash,
                         ),
                     )
@@ -204,14 +205,13 @@ class SQLiteRepository:
                         """
                         UPDATE segments SET
                             ordinal=?, heading=?, text=?, char_start=?,
-                            char_end=?, importance=?, content_hash=?
+                            char_end=?, content_hash=?
                         WHERE segment_id=?
                         """,
                         (
                             segment.ordinal, segment.heading, segment.text,
                             segment.char_start, segment.char_end,
-                            segment.importance, segment.content_hash,
-                            persistent_id,
+                            segment.content_hash, persistent_id,
                         ),
                     )
                     if str(old["content_hash"]) == segment.content_hash:
@@ -482,6 +482,11 @@ class SQLiteRepository:
                     s.heading,
                     s.text,
                     s.importance,
+                    s.confidence,
+                    s.source_quality,
+                    s.access_count,
+                    s.pinned,
+                    s.last_accessed_at,
                     d.source_path,
                     d.title,
                     d.indexed_at
@@ -493,6 +498,72 @@ class SQLiteRepository:
             ).fetchall()
 
         return {str(row[0]): dict(row) for row in rows}
+
+    def set_segment_weighting(
+        self,
+        segment_id: str,
+        *,
+        importance: float | None = None,
+        confidence: float | None = None,
+        source_quality: float | None = None,
+        pinned: bool | None = None,
+    ) -> dict:
+        updates: list[str] = []
+        values: list[object] = []
+
+        for name, value, low, high in (
+            ("importance", importance, 0.0, 2.0),
+            ("confidence", confidence, 0.0, 1.0),
+            ("source_quality", source_quality, 0.0, 1.0),
+        ):
+            if value is None:
+                continue
+            numeric = float(value)
+            if not low <= numeric <= high:
+                raise ValueError(f"{name} must be between {low} and {high}")
+            updates.append(f"{name}=?")
+            values.append(numeric)
+
+        if pinned is not None:
+            updates.append("pinned=?")
+            values.append(1 if pinned else 0)
+
+        if not updates:
+            raise ValueError("At least one weighting field must be supplied")
+
+        values.append(segment_id)
+        with self.connect() as db:
+            cursor = db.execute(
+                f"UPDATE segments SET {', '.join(updates)} WHERE segment_id=?",
+                tuple(values),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Unknown segment: {segment_id}")
+            row = db.execute(
+                """
+                SELECT segment_id, importance, confidence, source_quality,
+                       access_count, pinned, last_accessed_at
+                FROM segments WHERE segment_id=?
+                """,
+                (segment_id,),
+            ).fetchone()
+        result = dict(row)
+        result["pinned"] = bool(result["pinned"])
+        return result
+
+    def record_access(self, segment_ids: Sequence[str]) -> None:
+        if not segment_ids:
+            return
+        unique_ids = list(dict.fromkeys(segment_ids))
+        with self.connect() as db:
+            db.executemany(
+                """
+                UPDATE segments
+                SET access_count=access_count+1, last_accessed_at=?
+                WHERE segment_id=?
+                """,
+                [(now(), segment_id) for segment_id in unique_ids],
+            )
 
     def inspect_concept(
         self,
