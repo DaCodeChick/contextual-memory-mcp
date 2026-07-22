@@ -13,6 +13,14 @@ class MemoryState(IntEnum):
     REJECTED = 3
 
 
+class LifecycleAction(IntEnum):
+    """Action recommended by a lifecycle policy."""
+
+    KEEP = 0
+    PROMOTE = 1
+    ARCHIVE = 2
+
+
 class MemoryType(IntEnum):
     """Domain-independent semantic category for a memory."""
 
