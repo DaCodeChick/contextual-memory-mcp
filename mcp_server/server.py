@@ -100,9 +100,15 @@ def explore_memory(
         limit=limit,
     )
 
+def warm_up_memory() -> None:
+    """Load the embedding model and initialize persistent vector storage."""
+    memory.vectors
+    memory.embedder.embed_query("contextual memory startup")
+
 
 def main() -> None:
     mcp.run(transport="stdio")
+    warm_up_memory()
 
 
 if __name__ == "__main__":
