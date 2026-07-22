@@ -66,6 +66,25 @@ def test_sensitive_explicit_history_is_retained_as_candidate(tmp_path: Path) -> 
     assert result["memory_state"] == int(MemoryState.CANDIDATE)
     assert result["memory_type"] == int(MemoryType.FACT)
     assert result["memory_origin"] == int(MemoryOrigin.EXPLICIT_USER)
+    assert result["importance"] == 1.25
+    assert result["importance"] < ingestion.settings.lifecycle_promotion_importance
+
+
+def test_sensitive_importance_respects_promotion_boundary(tmp_path: Path) -> None:
+    ingestion, _, _ = make_ingestion(
+        tmp_path,
+        automatic_sensitive_memory_importance=1.8,
+        lifecycle_promotion_importance=1.1,
+    )
+
+    result = ingestion.remember(
+        title="Disclosure of traumatic history",
+        text="User disclosed a history of rape.",
+        memory_origin=MemoryOrigin.EXPLICIT_USER,
+    )
+
+    assert result["memory_state"] == int(MemoryState.CANDIDATE)
+    assert result["importance"] == 1.09
 
 
 def test_model_inference_is_candidate_inference(tmp_path: Path) -> None:

@@ -31,12 +31,12 @@ class IngestionService:
         self.repository = repository
         self.vectors = vectors
 
-    @staticmethod
     def _initial_memory_policy(
+        self,
         title: str,
         text: str,
         origin: MemoryOrigin,
-    ) -> tuple[MemoryState, MemoryType]:
+    ) -> tuple[MemoryState, MemoryType, float]:
         """Choose server-owned lifecycle and type metadata.
 
         Direct user statements are active by default, but sensitive personal
@@ -45,7 +45,11 @@ class IngestionService:
         candidates and are explicitly typed as inferences.
         """
         if origin == MemoryOrigin.MODEL_INFERENCE:
-            return MemoryState.CANDIDATE, MemoryType.INFERENCE
+            return (
+                MemoryState.CANDIDATE,
+                MemoryType.INFERENCE,
+                self.settings.automatic_memory_importance,
+            )
 
         combined = f"{title} {text}".casefold()
 
@@ -63,11 +67,18 @@ class IngestionService:
             "mental health diagnosis",
             "medical diagnosis",
         )
-        state = (
-            MemoryState.CANDIDATE
-            if any(marker in combined for marker in sensitive_markers)
-            else MemoryState.ACTIVE
-        )
+        sensitive = any(marker in combined for marker in sensitive_markers)
+        state = MemoryState.CANDIDATE if sensitive else MemoryState.ACTIVE
+        importance = self.settings.automatic_memory_importance
+        if sensitive:
+            # Sensitive direct-user history should remain conservatively staged
+            # while still receiving enough weight to be retrievable. Keep it
+            # below the automatic promotion threshold so maintenance does not
+            # immediately turn the candidate into an active memory.
+            importance = min(
+                self.settings.automatic_sensitive_memory_importance,
+                max(0.0, self.settings.lifecycle_promotion_importance - 0.01),
+            )
 
         type_markers: tuple[tuple[MemoryType, tuple[str, ...]], ...] = (
             (
@@ -133,9 +144,9 @@ class IngestionService:
         )
         for memory_type, markers in type_markers:
             if any(marker in combined for marker in markers):
-                return state, memory_type
+                return state, memory_type, importance
 
-        return state, MemoryType.FACT
+        return state, MemoryType.FACT, importance
 
     @staticmethod
     def _normalize_exclusions(
@@ -312,8 +323,9 @@ class IngestionService:
             self.settings.chunk_overlap,
         )
         origin = coerce_enum(MemoryOrigin, memory_origin)
-        state, kind = self._initial_memory_policy(title, text, origin)
-        importance_value = self.settings.automatic_memory_importance
+        state, kind, importance_value = self._initial_memory_policy(
+            title, text, origin
+        )
         confidence_value = self.settings.automatic_memory_confidence
         source_quality_value = self.settings.automatic_memory_source_quality
         if not 0.0 <= importance_value <= 2.0:

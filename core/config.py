@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     ranking_recency_half_life_days: float = Field(default=45.0, gt=0.0)
 
     automatic_memory_importance: float = Field(default=0.5, ge=0.0, le=2.0)
+    automatic_sensitive_memory_importance: float = Field(
+        default=1.25, ge=0.0, le=2.0
+    )
     automatic_memory_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     automatic_memory_source_quality: float = Field(default=1.0, ge=0.0, le=1.0)
 
