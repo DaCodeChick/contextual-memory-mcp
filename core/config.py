@@ -4,18 +4,32 @@ from pathlib import Path
 from typing import Annotated
 
 from pydantic import BeforeValidator, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    NoDecode,
+    SettingsConfigDict,
+)
 
 
 def _csv(value: object) -> list[str]:
     if isinstance(value, str):
-        return [part.strip() for part in value.split(",") if part.strip()]
+        return [
+            part.strip()
+            for part in value.split(",")
+            if part.strip()
+        ]
+
     if isinstance(value, list):
         return [str(part) for part in value]
+
     raise TypeError("Expected a comma-separated string or list")
 
 
-CsvList = Annotated[list[str], BeforeValidator(_csv)]
+CsvList = Annotated[
+    list[str],
+    NoDecode,
+    BeforeValidator(_csv),
+]
 
 
 class Settings(BaseSettings):
