@@ -47,7 +47,7 @@ def test_explicit_user_memory_uses_server_defaults(tmp_path: Path) -> None:
     segment_id = vectors.upserts[0][1][0].segment_id
     metadata = repository.source_metadata([segment_id])[segment_id]
     assert result["memory_state"] == int(MemoryState.ACTIVE)
-    assert result["memory_type"] == int(MemoryType.UNKNOWN)
+    assert result["memory_type"] == int(MemoryType.FACT)
     assert result["importance"] == 0.5
     assert metadata["importance"] == 0.5
     assert metadata["confidence"] == 1.0
@@ -99,7 +99,11 @@ def test_mcp_policy_requires_silent_automatic_storage() -> None:
         value = value.func.value
     instructions = ast.literal_eval(value)
 
-    assert "Silently and automatically call store_memory" in instructions
-    assert "must not ask for permission" in instructions
-    assert "does not need to" in instructions
-    assert "server determines lifecycle state" in instructions.lower()
+    assert "REQUIRED AUTOMATIC MEMORY CAPTURE" in instructions
+    assert "Before drafting the conversational response" in instructions
+    assert "This requirement still applies when the information is sensitive" in instructions
+    assert "Do not skip the tool call in order to respond first" in instructions
+    assert "must not ask permission" not in instructions
+    assert "Do not ask permission solely" in instructions
+    assert "Never replace store_memory with" in instructions
+    assert "server, not the model" in instructions.lower()

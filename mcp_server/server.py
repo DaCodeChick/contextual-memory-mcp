@@ -12,21 +12,31 @@ from core.stores import MemoryStoreConfig, StoreMode
 MCP_INSTRUCTIONS = """
 Use recall_memory whenever stored context may help answer the user's request.
 
-Silently and automatically call store_memory when the user provides durable
-information that could improve future conversations. The user does not need to
-say "remember this", and you must not ask for permission merely because a fact
-may be stored. Memory capture is an internal action and should not interrupt or
-be announced in the conversational response.
+REQUIRED AUTOMATIC MEMORY CAPTURE:
+Before drafting the conversational response, call store_memory whenever the
+current user message explicitly states durable information that could improve
+future conversations. This includes durable facts, preferences, relationships,
+projects, goals, skills, procedures, and personal history.
 
-Store direct user statements with store_memory. Use store_memory_candidate only
-for model inferences, interpretations, guesses, or other information not directly
-stated by the user. Never present an inference as a direct user statement.
+This requirement still applies when the information is sensitive, traumatic,
+medical, deeply personal, or disclosed during an emotionally supportive
+conversation. Do not skip the tool call in order to respond first, and do not
+decide that sensitivity makes storage inappropriate. The server, not the model,
+assigns lifecycle state, type, importance, confidence, source quality, and the
+appropriate conservative retention policy.
+
+The user does not need to say "remember this". Do not ask permission solely to
+call the tool, do not announce routine memory capture, and continue the
+conversation normally after the call.
+
+Use store_memory only for information directly stated by the user. Use
+store_memory_candidate only for useful model-generated inferences,
+interpretations, hypotheses, or guesses. Never replace store_memory with
+store_memory_candidate merely because a direct user statement is sensitive.
 
 Do not store transient chatter, authentication secrets, financial credentials,
 private keys, session tokens, or information the user explicitly asks not to
-retain. The server determines lifecycle state, type, importance, confidence, and
-source quality. Sensitive personal history is retained conservatively as a
-candidate instead of being immediately recallable.
+retain.
 """.strip()
 
 
@@ -74,16 +84,18 @@ def store_memory(
     content: str,
     concepts: list[str] | None = None,
 ) -> dict:
-    """Silently capture durable information directly stated by the user.
+    """Automatically store durable information directly stated by the user.
 
-    Call this automatically when the current user message contains information
-    that may improve future conversations. The user does not need to request
-    storage, and you must not ask permission solely to call this tool. Continue
-    the conversation normally after the call without announcing routine storage.
+    This tool call is required before drafting the response whenever the current
+    user message explicitly states durable information that may improve future
+    conversations. Call it even when the information is sensitive, traumatic,
+    medical, deeply personal, or shared during an emotionally supportive
+    exchange. Do not skip storage in order to respond first, ask permission
+    solely for the tool call, or announce routine memory capture.
 
-    The server determines lifecycle state, memory type, importance, confidence,
-    source quality, and origin metadata. Sensitive personal history is retained
-    conservatively as a candidate instead of becoming immediately recallable.
+    The model only extracts the direct user statement. The server determines
+    lifecycle state, memory type, importance, confidence, source quality, and
+    conservative handling of sensitive information.
 
     Args:
         target_store:
@@ -111,12 +123,13 @@ def store_memory_candidate(
     content: str,
     concepts: list[str] | None = None,
 ) -> dict:
-    """Silently store a model inference as a non-recallable candidate.
+    """Store a useful model-generated inference as a candidate.
 
-    Call this automatically for useful interpretations, hypotheses, or inferred
-    context that the user did not directly state. Do not ask permission merely
-    to retain the candidate, and never use this tool to rewrite a direct user
-    statement as though it were a model inference.
+    Use this only for interpretations, hypotheses, or inferred context that the
+    user did not directly state. Never use it instead of store_memory merely
+    because a direct user statement is sensitive, traumatic, medical, or deeply
+    personal. Do not ask permission solely to retain the candidate or announce
+    routine candidate capture.
 
     The server determines lifecycle state, memory type, importance, confidence,
     source quality, and origin metadata.

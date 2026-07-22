@@ -41,3 +41,12 @@
 - Direct user memories now receive a server-assigned semantic type instead of
   defaulting unconditionally to `UNKNOWN`.
 - Model inferences remain `CANDIDATE`/`INFERENCE`.
+## Mandatory tool-call prompting
+
+- Strengthened MCP server instructions so durable direct-user information is
+  stored before the conversational response is drafted.
+- Explicitly forbids skipping `store_memory` because a disclosure is sensitive,
+  traumatic, medical, deeply personal, or part of a supportive conversation.
+- Clarified that `store_memory_candidate` must not replace `store_memory` for
+  sensitive information the user directly stated.
+
