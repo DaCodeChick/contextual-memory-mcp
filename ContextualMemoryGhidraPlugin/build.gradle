@@ -1,0 +1,39 @@
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+if (!project.hasProperty('GHIDRA_INSTALL_DIR')) {
+    throw new GradleException('Set GHIDRA_INSTALL_DIR, e.g. gradle -PGHIDRA_INSTALL_DIR=/opt/ghidra buildExtension')
+}
+
+apply from: new File(project.property('GHIDRA_INSTALL_DIR'), 'support/buildExtension.gradle')
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+// Ghidra extensions load bundled jars from lib/. Keep SQLite self-contained.
+tasks.register('copyRuntimeLibraries', Copy) {
+    from configurations.runtimeClasspath
+    into layout.projectDirectory.dir('lib')
+}
+
+tasks.named('buildExtension') {
+    dependsOn tasks.named('copyRuntimeLibraries')
+}
