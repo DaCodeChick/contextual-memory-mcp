@@ -31,28 +31,22 @@ class IngestionService:
         self.repository = repository
         self.vectors = vectors
 
-    def _initial_memory_policy(
+    def _initial_memory_state(
         self,
         title: str,
         text: str,
         origin: MemoryOrigin,
-    ) -> tuple[MemoryState, MemoryType, float]:
-        """Choose server-owned lifecycle and type metadata.
+    ) -> MemoryState:
+        """Choose server-owned lifecycle state only.
 
-        Direct user statements are active by default, but sensitive personal
-        history is retained conservatively as a candidate until it is
-        reinforced or manually promoted. Model inferences are always
-        candidates and are explicitly typed as inferences.
+        Model inferences are candidates. Direct user statements are active by
+        default, while sensitive personal history is staged conservatively as
+        a candidate. Semantic type and importance are supplied by the model.
         """
         if origin == MemoryOrigin.MODEL_INFERENCE:
-            return (
-                MemoryState.CANDIDATE,
-                MemoryType.INFERENCE,
-                self.settings.automatic_memory_importance,
-            )
+            return MemoryState.CANDIDATE
 
         combined = f"{title} {text}".casefold()
-
         sensitive_markers = (
             "sexual assault",
             "sexual abuse",
@@ -67,86 +61,11 @@ class IngestionService:
             "mental health diagnosis",
             "medical diagnosis",
         )
-        sensitive = any(marker in combined for marker in sensitive_markers)
-        state = MemoryState.CANDIDATE if sensitive else MemoryState.ACTIVE
-        importance = self.settings.automatic_memory_importance
-        if sensitive:
-            # Sensitive direct-user history should remain conservatively staged
-            # while still receiving enough weight to be retrievable. Keep it
-            # below the automatic promotion threshold so maintenance does not
-            # immediately turn the candidate into an active memory.
-            importance = min(
-                self.settings.automatic_sensitive_memory_importance,
-                max(0.0, self.settings.lifecycle_promotion_importance - 0.01),
-            )
-
-        type_markers: tuple[tuple[MemoryType, tuple[str, ...]], ...] = (
-            (
-                MemoryType.PREFERENCE,
-                (
-                    "prefer",
-                    "preference",
-                    "favorite",
-                    "favourite",
-                    "likes ",
-                    "dislikes ",
-                ),
-            ),
-            (
-                MemoryType.RELATIONSHIP,
-                (
-                    "husband",
-                    "wife",
-                    "spouse",
-                    "partner",
-                    "mother",
-                    "father",
-                    "sister",
-                    "brother",
-                    "family",
-                ),
-            ),
-            (
-                MemoryType.PROJECT,
-                (
-                    "project",
-                    "repository",
-                    "codebase",
-                    "working on",
-                    "building",
-                    "developing",
-                ),
-            ),
-            (
-                MemoryType.SKILL,
-                (
-                    "skilled",
-                    "proficient",
-                    "experience with",
-                    "knows how to",
-                    "programming language",
-                ),
-            ),
-            (
-                MemoryType.PROCEDURE,
-                (
-                    "workflow",
-                    "procedure",
-                    "process",
-                    "steps to",
-                    "how to",
-                ),
-            ),
-            (
-                MemoryType.OBSERVATION,
-                ("noticed", "observed", "seems to", "appears to"),
-            ),
+        return (
+            MemoryState.CANDIDATE
+            if any(marker in combined for marker in sensitive_markers)
+            else MemoryState.ACTIVE
         )
-        for memory_type, markers in type_markers:
-            if any(marker in combined for marker in markers):
-                return state, memory_type, importance
-
-        return state, MemoryType.FACT, importance
 
     @staticmethod
     def _normalize_exclusions(
@@ -304,6 +223,8 @@ class IngestionService:
         text: str,
         concepts: list[str] | None = None,
         *,
+        memory_type: int | MemoryType,
+        importance: float,
         memory_origin: MemoryOrigin,
     ) -> dict:
         source_id = stable_id("mem", title)
@@ -323,9 +244,9 @@ class IngestionService:
             self.settings.chunk_overlap,
         )
         origin = coerce_enum(MemoryOrigin, memory_origin)
-        state, kind, importance_value = self._initial_memory_policy(
-            title, text, origin
-        )
+        state = self._initial_memory_state(title, text, origin)
+        kind = coerce_enum(MemoryType, memory_type)
+        importance_value = max(0.0, min(2.0, float(importance)))
         confidence_value = self.settings.automatic_memory_confidence
         source_quality_value = self.settings.automatic_memory_source_quality
         if not 0.0 <= importance_value <= 2.0:

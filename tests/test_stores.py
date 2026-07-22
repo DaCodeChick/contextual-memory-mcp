@@ -65,6 +65,8 @@ def test_locked_store_rejects_writes_and_is_skipped_by_maintenance(
             target_store="reference",
             title="No write",
             text="This must be rejected",
+            memory_type=2,
+            importance=0.5,
             memory_origin=MemoryOrigin.EXPLICIT_USER,
         )
 

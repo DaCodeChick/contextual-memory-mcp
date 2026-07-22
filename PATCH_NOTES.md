@@ -29,10 +29,13 @@
   prompt merely to be retained conservatively.
 - Model-generated hypotheses remain separated through
   `store_memory_candidate` and use model-inference origin metadata.
-- Automatic direct-user memories now default to neutral importance (`0.5`)
-  instead of maximum importance (`1.0`). Confidence and source quality remain
-  independently configurable.
-- Added explicit scoring validation and regression tests for the MCP policy.
+- Memory type and importance are now required model-supplied fields for both
+  direct memories and inferred candidates.
+- Importance is normalized to the supported `0.0` to `2.0` range; lifecycle,
+  origin, confidence, source quality, and sensitive retention remain
+  server-owned.
+- Removed the previous server-side type and importance heuristics and their
+  configuration settings without a compatibility path.
 
 ## Sensitive direct-user memory policy
 

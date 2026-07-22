@@ -21,9 +21,9 @@ projects, goals, skills, procedures, and personal history.
 This requirement still applies when the information is sensitive, traumatic,
 medical, deeply personal, or disclosed during an emotionally supportive
 conversation. Do not skip the tool call in order to respond first, and do not
-decide that sensitivity makes storage inappropriate. The server, not the model,
-assigns lifecycle state, type, importance, confidence, source quality, and the
-appropriate conservative retention policy.
+decide that sensitivity makes storage inappropriate. The model must estimate semantic memory type and importance. The server
+validates those values and remains responsible for lifecycle state, origin,
+confidence, source quality, and conservative retention policy.
 
 The user does not need to say "remember this". Do not ask permission solely to
 call the tool, do not announce routine memory capture, and continue the
@@ -82,6 +82,8 @@ def store_memory(
     target_store: str,
     title: str,
     content: str,
+    memory_type: int,
+    importance: float,
     concepts: list[str] | None = None,
 ) -> dict:
     """Automatically store durable information directly stated by the user.
@@ -93,8 +95,9 @@ def store_memory(
     exchange. Do not skip storage in order to respond first, ask permission
     solely for the tool call, or announce routine memory capture.
 
-    The model only extracts the direct user statement. The server determines
-    lifecycle state, memory type, importance, confidence, source quality, and
+    The model extracts the direct user statement and assigns its semantic type
+    and future conversational importance. The server validates those values and
+    determines lifecycle state, origin, confidence, source quality, and
     conservative handling of sensitive information.
 
     Args:
@@ -104,6 +107,16 @@ def store_memory(
             A concise, descriptive title for the stored memory.
         content:
             A complete standalone statement preserving what the user said.
+        memory_type:
+            Integer MemoryType classification: 0 unknown, 1 preference,
+            2 fact, 3 relationship, 4 project, 5 skill, 6 procedure,
+            7 observation, 8 inference.
+        importance:
+            Estimated future conversational value from 0.0 to 2.0.
+            Use 0.0 for trivial or fleeting details, 0.5 for ordinary durable
+            context, 1.0 for clearly useful context, 1.5 for major life or
+            project context, and 2.0 for foundational information. Judge
+            usefulness rather than emotional intensity.
         concepts:
             Optional normalized topics connecting related memories.
     """
@@ -112,6 +125,8 @@ def store_memory(
         title=title,
         text=content,
         concepts=concepts,
+        memory_type=memory_type,
+        importance=importance,
         memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
 
@@ -121,6 +136,8 @@ def store_memory_candidate(
     target_store: str,
     title: str,
     content: str,
+    memory_type: int,
+    importance: float,
     concepts: list[str] | None = None,
 ) -> dict:
     """Store a useful model-generated inference as a candidate.
@@ -131,8 +148,9 @@ def store_memory_candidate(
     personal. Do not ask permission solely to retain the candidate or announce
     routine candidate capture.
 
-    The server determines lifecycle state, memory type, importance, confidence,
-    source quality, and origin metadata.
+    The model assigns semantic type and estimated future conversational
+    importance. The server validates those values and determines lifecycle
+    state, confidence, source quality, and origin metadata.
 
     Args:
         target_store:
@@ -141,6 +159,12 @@ def store_memory_candidate(
             A concise, descriptive title for the inferred memory.
         content:
             The proposed memory in standalone form.
+        memory_type:
+            Integer MemoryType classification: 0 unknown, 1 preference,
+            2 fact, 3 relationship, 4 project, 5 skill, 6 procedure,
+            7 observation, 8 inference.
+        importance:
+            Estimated future conversational value from 0.0 to 2.0.
         concepts:
             Optional normalized graph concepts.
     """
@@ -149,6 +173,8 @@ def store_memory_candidate(
         title=title,
         text=content,
         concepts=concepts,
+        memory_type=memory_type,
+        importance=importance,
         memory_origin=MemoryOrigin.MODEL_INFERENCE,
     )
 

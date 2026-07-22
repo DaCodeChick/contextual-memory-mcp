@@ -24,8 +24,8 @@ class FakeVectors:
         self.upserts.append((doc, list(segments), list(deleted_ids)))
 
 
-def make_ingestion(tmp_path: Path, **settings_kwargs) -> tuple[IngestionService, SQLiteRepository, FakeVectors]:
-    settings = Settings(data_dir=tmp_path, **settings_kwargs)
+def make_ingestion(tmp_path: Path) -> tuple[IngestionService, SQLiteRepository, FakeVectors]:
+    settings = Settings(data_dir=tmp_path)
     repository = SQLiteRepository(settings.sqlite_path)
     repository.initialize()
     vectors = FakeVectors()
@@ -33,14 +33,14 @@ def make_ingestion(tmp_path: Path, **settings_kwargs) -> tuple[IngestionService,
     return ingestion, repository, vectors
 
 
-def test_explicit_user_memory_uses_server_defaults(tmp_path: Path) -> None:
-    ingestion, repository, vectors = make_ingestion(
-        tmp_path, automatic_memory_importance=0.5
-    )
+def test_explicit_user_memory_uses_model_metadata(tmp_path: Path) -> None:
+    ingestion, repository, vectors = make_ingestion(tmp_path)
 
     result = ingestion.remember(
-        title="Stable identity",
-        text="The user's name is Schala.",
+        title="Earned Master's Degree",
+        text="User earned their master's degree today after a long journey.",
+        memory_type=MemoryType.FACT,
+        importance=1.2,
         memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
 
@@ -48,60 +48,65 @@ def test_explicit_user_memory_uses_server_defaults(tmp_path: Path) -> None:
     metadata = repository.source_metadata([segment_id])[segment_id]
     assert result["memory_state"] == int(MemoryState.ACTIVE)
     assert result["memory_type"] == int(MemoryType.FACT)
-    assert result["importance"] == 0.5
-    assert metadata["importance"] == 0.5
-    assert metadata["confidence"] == 1.0
-    assert metadata["source_quality"] == 1.0
+    assert result["importance"] == 1.2
+    assert metadata["importance"] == 1.2
 
 
-def test_sensitive_explicit_history_is_retained_as_candidate(tmp_path: Path) -> None:
+def test_sensitive_explicit_history_keeps_model_importance_but_is_candidate(tmp_path: Path) -> None:
     ingestion, _, _ = make_ingestion(tmp_path)
 
     result = ingestion.remember(
         title="Disclosure of childhood sexual assault",
         text="User disclosed experiencing sexual assault at age 10-11.",
+        memory_type=MemoryType.FACT,
+        importance=1.6,
         memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
 
     assert result["memory_state"] == int(MemoryState.CANDIDATE)
     assert result["memory_type"] == int(MemoryType.FACT)
-    assert result["memory_origin"] == int(MemoryOrigin.EXPLICIT_USER)
-    assert result["importance"] == 1.25
-    assert result["importance"] < ingestion.settings.lifecycle_promotion_importance
+    assert result["importance"] == 1.6
 
 
-def test_sensitive_importance_respects_promotion_boundary(tmp_path: Path) -> None:
-    ingestion, _, _ = make_ingestion(
-        tmp_path,
-        automatic_sensitive_memory_importance=1.8,
-        lifecycle_promotion_importance=1.1,
+def test_importance_is_clamped_to_supported_range(tmp_path: Path) -> None:
+    ingestion, _, _ = make_ingestion(tmp_path)
+
+    high = ingestion.remember(
+        title="High",
+        text="High importance",
+        memory_type=MemoryType.FACT,
+        importance=9.0,
+        memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
-
-    result = ingestion.remember(
-        title="Disclosure of traumatic history",
-        text="User disclosed a history of rape.",
+    low = ingestion.remember(
+        title="Low",
+        text="Low importance",
+        memory_type=MemoryType.FACT,
+        importance=-4.0,
         memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
 
-    assert result["memory_state"] == int(MemoryState.CANDIDATE)
-    assert result["importance"] == 1.09
+    assert high["importance"] == 2.0
+    assert low["importance"] == 0.0
 
 
-def test_model_inference_is_candidate_inference(tmp_path: Path) -> None:
+def test_model_inference_uses_supplied_type_and_is_candidate(tmp_path: Path) -> None:
     ingestion, _, _ = make_ingestion(tmp_path)
 
     result = ingestion.remember(
         title="Likely preference",
         text="The user may prefer concise answers.",
+        memory_type=MemoryType.PREFERENCE,
+        importance=0.8,
         memory_origin=MemoryOrigin.MODEL_INFERENCE,
     )
 
     assert result["memory_state"] == int(MemoryState.CANDIDATE)
-    assert result["memory_type"] == int(MemoryType.INFERENCE)
-    assert result["memory_origin"] == int(MemoryOrigin.MODEL_INFERENCE)
+    assert result["memory_type"] == int(MemoryType.PREFERENCE)
+    assert result["importance"] == 0.8
 
 
-def test_mcp_policy_requires_silent_automatic_storage() -> None:
+def test_mcp_policy_assigns_type_and_importance_to_model() -> None:
     server_path = Path(__file__).parents[1] / "mcp_server" / "server.py"
     module = ast.parse(server_path.read_text(encoding="utf-8"))
     assignment = next(
@@ -118,11 +123,6 @@ def test_mcp_policy_requires_silent_automatic_storage() -> None:
         value = value.func.value
     instructions = ast.literal_eval(value)
 
-    assert "REQUIRED AUTOMATIC MEMORY CAPTURE" in instructions
-    assert "Before drafting the conversational response" in instructions
-    assert "This requirement still applies when the information is sensitive" in instructions
-    assert "Do not skip the tool call in order to respond first" in instructions
-    assert "must not ask permission" not in instructions
-    assert "Do not ask permission solely" in instructions
-    assert "Never replace store_memory with" in instructions
-    assert "server, not the model" in instructions.lower()
+    assert "model must estimate semantic memory type and importance" in instructions
+    assert "server" in instructions.lower()
+    assert "lifecycle state" in instructions
