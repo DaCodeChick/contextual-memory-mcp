@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.config import Settings
+from core.enums import MemoryOrigin, MemoryState, MemoryType
 from core.models import SearchHit
 from core.ranking import rank_memory
 from database.repositories import SQLiteRepository
@@ -33,9 +34,13 @@ class RetrievalEngine:
         requested = top_k or self.settings.default_top_k
         requested = max(1, min(requested, 50))
 
-        vector_hits = self.vectors.search(query, max(40, requested * 5))
+        vector_hits = self.vectors.search(
+            query,
+            max(40, requested * 5),
+            memory_state=int(MemoryState.ACTIVE),
+        )
         ids = [hit["segment_id"] for hit in vector_hits]
-        metadata = self.repository.source_metadata(ids)
+        metadata = self.repository.source_metadata(ids, active_only=True)
         concepts = self.repository.concepts_for(ids)
         lexical = self.repository.lexical_scores(query)
         graph = self.repository.graph_scores(extract_concepts(query, limit=10))
@@ -55,6 +60,9 @@ class RetrievalEngine:
             source_quality = float(row["source_quality"])
             access_count = int(row["access_count"])
             pinned = bool(row["pinned"])
+            memory_state = MemoryState(int(row["memory_state"]))
+            memory_type = MemoryType(int(row["memory_type"]))
+            memory_origin = MemoryOrigin(int(row["memory_origin"]))
             ranking = rank_memory(
                 vector_score=vector_score,
                 lexical_score=lexical_score,
@@ -83,6 +91,9 @@ class RetrievalEngine:
                     source_quality=source_quality,
                     access_count=access_count,
                     pinned=pinned,
+                    memory_state=memory_state,
+                    memory_type=memory_type,
+                    memory_origin=memory_origin,
                     concepts=concepts.get(segment_id, []),
                     metadata={
                         "indexed_at": row["indexed_at"],
@@ -122,6 +133,12 @@ class RetrievalEngine:
                     "source_quality": hit.source_quality,
                     "access_count": hit.access_count,
                     "pinned": hit.pinned,
+                    "memory_state": int(hit.memory_state),
+                    "memory_state_name": hit.memory_state.name,
+                    "memory_type": int(hit.memory_type),
+                    "memory_type_name": hit.memory_type.name,
+                    "memory_origin": int(hit.memory_origin),
+                    "memory_origin_name": hit.memory_origin.name,
                 },
                 "ranking": hit.metadata["ranking"],
             }

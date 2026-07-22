@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
+from core.enums import MemoryOrigin, MemoryState, MemoryType
 from core.memory_matrix import ContextualMemoryMatrix
 
 
@@ -55,6 +56,7 @@ def remember_memory(
     title: str,
     content: str,
     concepts: list[str] | None = None,
+    memory_type: int = int(MemoryType.UNKNOWN),
 ) -> dict:
     """Store an explicit durable memory for later conversations.
 
@@ -70,11 +72,73 @@ def remember_memory(
         concepts:
             Optional normalized topics that should connect this memory to
             related material in the knowledge graph.
+        memory_type:
+            Integer MemoryType value: 0 unknown, 1 preference, 2 fact,
+            3 relationship, 4 project, 5 skill, 6 procedure,
+            7 observation, or 8 inference.
     """
     return memory.ingestion.remember(
         title=title,
         text=content,
         concepts=concepts,
+        memory_state=MemoryState.ACTIVE,
+        memory_type=memory_type,
+        memory_origin=MemoryOrigin.EXPLICIT_USER,
+    )
+
+
+@mcp.tool()
+def store_memory_candidate(
+    title: str,
+    content: str,
+    concepts: list[str] | None = None,
+    memory_type: int = int(MemoryType.INFERENCE),
+) -> dict:
+    """Store a proposed memory without making it eligible for recall.
+
+    Use this for model-inferred or automatically extracted information that
+    may be durable but should be reviewed or reinforced before activation.
+
+    Args:
+        title:
+            A concise descriptive title.
+        content:
+            The proposed memory in standalone form.
+        concepts:
+            Optional normalized graph concepts.
+        memory_type:
+            Integer MemoryType value. Inference (8) is the default.
+    """
+    return memory.ingestion.remember(
+        title=title,
+        text=content,
+        concepts=concepts,
+        memory_state=MemoryState.CANDIDATE,
+        memory_type=memory_type,
+        memory_origin=MemoryOrigin.MODEL_INFERENCE,
+    )
+
+
+@mcp.tool()
+def update_memory_lifecycle(
+    segment_id: str,
+    memory_state: int | None = None,
+    memory_type: int | None = None,
+    memory_origin: int | None = None,
+) -> dict:
+    """Update integer-backed lifecycle metadata for a memory segment.
+
+    MemoryState values: 0 candidate, 1 active, 2 archived, 3 rejected.
+    MemoryType values: 0 unknown, 1 preference, 2 fact, 3 relationship,
+    4 project, 5 skill, 6 procedure, 7 observation, 8 inference.
+    MemoryOrigin values: 0 unknown, 1 explicit user, 2 imported file,
+    3 generated summary, 4 model inference, 5 specialty.
+    """
+    return memory.update_lifecycle(
+        segment_id,
+        memory_state=memory_state,
+        memory_type=memory_type,
+        memory_origin=memory_origin,
     )
 
 

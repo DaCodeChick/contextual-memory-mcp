@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.enums import MemoryOrigin, MemoryState, MemoryType
+
 
 @dataclass(slots=True)
 class SourceDocument:
@@ -32,6 +34,9 @@ class MemorySegment:
     concepts: list[str] = field(default_factory=list)
     confidence: float = 1.0
     source_quality: float = 1.0
+    memory_state: MemoryState = MemoryState.ACTIVE
+    memory_type: MemoryType = MemoryType.UNKNOWN
+    memory_origin: MemoryOrigin = MemoryOrigin.UNKNOWN
 
 
 # Compatibility alias for the first prompt-specific prototype.
@@ -55,5 +60,8 @@ class SearchHit:
     source_quality: float
     access_count: int
     pinned: bool
+    memory_state: MemoryState
+    memory_type: MemoryType
+    memory_origin: MemoryOrigin
     concepts: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)

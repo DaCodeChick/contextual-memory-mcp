@@ -7,6 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Sequence
 
+from core.enums import (
+    MemoryOrigin,
+    MemoryState,
+    MemoryType,
+    coerce_enum,
+)
 from core.models import MemorySegment, SourceDocument
 from database.migrations import apply_migrations
 from database.schema import SCHEMA
@@ -185,16 +191,18 @@ class SQLiteRepository:
                         INSERT INTO segments(
                             segment_id, source_id, ordinal, heading, text,
                             char_start, char_end, importance, confidence,
-                            source_quality, identity_key, content_hash
-                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                            source_quality, memory_state, memory_type,
+                            memory_origin, identity_key, content_hash
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             segment.segment_id, segment.source_id,
                             segment.ordinal, segment.heading, segment.text,
                             segment.char_start, segment.char_end,
                             segment.importance, segment.confidence,
-                            segment.source_quality, segment.identity_key,
-                            segment.content_hash,
+                            segment.source_quality, int(segment.memory_state),
+                            int(segment.memory_type), int(segment.memory_origin),
+                            segment.identity_key, segment.content_hash,
                         ),
                     )
                     inserted_ids.append(segment.segment_id)
@@ -468,6 +476,8 @@ class SQLiteRepository:
     def source_metadata(
         self,
         segment_ids: Sequence[str],
+        *,
+        active_only: bool = False,
     ) -> dict[str, dict]:
         if not segment_ids:
             return {}
@@ -487,14 +497,18 @@ class SQLiteRepository:
                     s.access_count,
                     s.pinned,
                     s.last_accessed_at,
+                    s.memory_state,
+                    s.memory_type,
+                    s.memory_origin,
                     d.source_path,
                     d.title,
                     d.indexed_at
                 FROM segments s
                 JOIN sources d ON d.source_id=s.source_id
                 WHERE s.segment_id IN ({marks})
+                  AND (?=0 OR s.memory_state=?)
                 """,
-                tuple(segment_ids),
+                (*segment_ids, 1 if active_only else 0, int(MemoryState.ACTIVE)),
             ).fetchall()
 
         return {str(row[0]): dict(row) for row in rows}
@@ -549,6 +563,60 @@ class SQLiteRepository:
             ).fetchone()
         result = dict(row)
         result["pinned"] = bool(result["pinned"])
+        return result
+
+    def set_segment_lifecycle(
+        self,
+        segment_id: str,
+        *,
+        memory_state: int | MemoryState | None = None,
+        memory_type: int | MemoryType | None = None,
+        memory_origin: int | MemoryOrigin | None = None,
+    ) -> dict:
+        updates: list[str] = []
+        values: list[object] = []
+
+        enum_fields = (
+            ("memory_state", memory_state, MemoryState),
+            ("memory_type", memory_type, MemoryType),
+            ("memory_origin", memory_origin, MemoryOrigin),
+        )
+        for name, value, enum_type in enum_fields:
+            if value is None:
+                continue
+            member = coerce_enum(enum_type, value)
+            updates.append(f"{name}=?")
+            values.append(int(member))
+
+        if not updates:
+            raise ValueError("At least one lifecycle field must be supplied")
+
+        values.append(segment_id)
+        with self.connect() as db:
+            cursor = db.execute(
+                f"UPDATE segments SET {', '.join(updates)} WHERE segment_id=?",
+                tuple(values),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Unknown segment: {segment_id}")
+            row = db.execute(
+                """
+                SELECT segment_id, memory_state, memory_type, memory_origin
+                FROM segments WHERE segment_id=?
+                """,
+                (segment_id,),
+            ).fetchone()
+
+        result = dict(row)
+        result["memory_state_name"] = MemoryState(
+            result["memory_state"]
+        ).name
+        result["memory_type_name"] = MemoryType(
+            result["memory_type"]
+        ).name
+        result["memory_origin_name"] = MemoryOrigin(
+            result["memory_origin"]
+        ).name
         return result
 
     def record_access(self, segment_ids: Sequence[str]) -> None:

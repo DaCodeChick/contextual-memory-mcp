@@ -69,9 +69,52 @@ def migration_0002_memory_weighting(db: sqlite3.Connection) -> None:
     )
 
 
+def migration_0003_memory_lifecycle(db: sqlite3.Connection) -> None:
+    columns = _column_names(db, "segments")
+    additions = {
+        "memory_state": "INTEGER NOT NULL DEFAULT 1",
+        "memory_type": "INTEGER NOT NULL DEFAULT 0",
+        "memory_origin": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for column, declaration in additions.items():
+        if column not in columns:
+            db.execute(
+                f"ALTER TABLE segments ADD COLUMN {column} {declaration}"
+            )
+
+    # Existing indexed content was already eligible for recall. Preserve that
+    # behavior while classifying file-backed sources as imported memories.
+    db.execute("UPDATE segments SET memory_state=1 WHERE memory_state IS NULL")
+    db.execute("UPDATE segments SET memory_type=0 WHERE memory_type IS NULL")
+    db.execute(
+        """
+        UPDATE segments
+        SET memory_origin = CASE
+            WHEN source_id IN (
+                SELECT source_id FROM sources WHERE source_kind='file'
+            ) THEN 2
+            WHEN source_id IN (
+                SELECT source_id FROM sources WHERE source_kind='memory'
+            ) THEN 1
+            ELSE COALESCE(memory_origin, 0)
+        END
+        """
+    )
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_memory_state "
+        "ON segments(memory_state)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_segments_memory_type "
+        "ON segments(memory_type)"
+    )
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "segment identity and content hashes", migration_0001_identity_and_hashes),
     (2, "persistent memory weighting", migration_0002_memory_weighting),
+    (3, "integer-backed memory lifecycle", migration_0003_memory_lifecycle),
 ]
 
 

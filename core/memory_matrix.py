@@ -53,6 +53,28 @@ class ContextualMemoryMatrix:
     def context(self) -> ContextBuilder:
         return ContextBuilder(self.settings, self.retrieval)
 
+    def update_lifecycle(
+        self,
+        segment_id: str,
+        *,
+        memory_state: int | None = None,
+        memory_type: int | None = None,
+        memory_origin: int | None = None,
+    ) -> dict:
+        result = self.repository.set_segment_lifecycle(
+            segment_id,
+            memory_state=memory_state,
+            memory_type=memory_type,
+            memory_origin=memory_origin,
+        )
+        self.vectors.update_lifecycle(
+            segment_id,
+            memory_state=result["memory_state"],
+            memory_type=result["memory_type"],
+            memory_origin=result["memory_origin"],
+        )
+        return result
+
     def clear(self) -> dict:
         vector_count = self.vectors.count()
         sqlite_counts = self.repository.stats()
