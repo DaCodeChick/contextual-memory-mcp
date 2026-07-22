@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from core.models import MemorySegment, SourceDocument
+from database.migrations import apply_migrations
 from database.schema import SCHEMA
 
 
@@ -27,6 +28,11 @@ class SQLiteRepository:
     def connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path)
         db.row_factory = sqlite3.Row
+        db.create_function(
+            "sha256_text",
+            1,
+            lambda value: hashlib.sha256(str(value).encode("utf-8")).hexdigest(),
+        )
         db.execute("PRAGMA foreign_keys=ON")
         try:
             yield db
@@ -40,6 +46,7 @@ class SQLiteRepository:
     def initialize(self) -> None:
         with self.connect() as db:
             db.executescript(SCHEMA)
+            apply_migrations(db)
 
     def clear(self) -> None:
         with self.connect() as db:
@@ -78,27 +85,51 @@ class SQLiteRepository:
             )
             return {str(row[0]) for row in rows}
 
-    def replace_document(
+    def reconcile_document(
         self,
         doc: SourceDocument,
         segments: Sequence[MemorySegment],
         source_kind: str = "file",
-    ) -> None:
+    ) -> dict[str, list[str]]:
+        """Reconcile scanner-owned content while preserving segment identity.
+
+        Existing rows are updated in place by ``identity_key``. This is the
+        foundation for preserving future learned state such as pinning and
+        access history across rescans.
+        """
         with self.connect() as db:
-            old = db.execute(
-                "SELECT segment_id FROM segments WHERE source_id=?",
+            existing_rows = db.execute(
+                """
+                SELECT segment_id, identity_key, content_hash
+                FROM segments
+                WHERE source_id=?
+                """,
                 (doc.source_id,),
             ).fetchall()
-            db.executemany(
-                "DELETE FROM segments_fts WHERE segment_id=?",
-                [(row[0],) for row in old],
-            )
+            existing = {str(row["identity_key"]): row for row in existing_rows}
+            incoming_keys = {segment.identity_key for segment in segments}
+
+            deleted_ids = [
+                str(row["segment_id"])
+                for key, row in existing.items()
+                if key not in incoming_keys
+            ]
+
             db.execute(
-                "DELETE FROM sources WHERE source_id=?",
-                (doc.source_id,),
-            )
-            db.execute(
-                "INSERT INTO sources VALUES(?,?,?,?,?,?,?,?)",
+                """
+                INSERT INTO sources(
+                    source_id, source_path, title, content_hash, modified_ns,
+                    size_bytes, source_kind, indexed_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    source_path=excluded.source_path,
+                    title=excluded.title,
+                    content_hash=excluded.content_hash,
+                    modified_ns=excluded.modified_ns,
+                    size_bytes=excluded.size_bytes,
+                    source_kind=excluded.source_kind,
+                    indexed_at=excluded.indexed_at
+                """,
                 (
                     doc.source_id,
                     doc.relative_path,
@@ -111,20 +142,82 @@ class SQLiteRepository:
                 ),
             )
 
-            for segment in segments:
-                db.execute(
-                    "INSERT INTO segments VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        segment.segment_id,
-                        segment.source_id,
-                        segment.ordinal,
-                        segment.heading,
-                        segment.text,
-                        segment.char_start,
-                        segment.char_end,
-                        segment.importance,
-                    ),
+            if deleted_ids:
+                db.executemany(
+                    "DELETE FROM segments_fts WHERE segment_id=?",
+                    [(segment_id,) for segment_id in deleted_ids],
                 )
+                marks = ",".join("?" for _ in deleted_ids)
+                db.execute(
+                    f"DELETE FROM segments WHERE segment_id IN ({marks})",
+                    tuple(deleted_ids),
+                )
+
+            # Rebuild source-owned search/concept projections. Segment rows are
+            # preserved and updated in place, so future learned columns survive.
+            source_segment_ids = [
+                str(row[0])
+                for row in db.execute(
+                    "SELECT segment_id FROM segments WHERE source_id=?",
+                    (doc.source_id,),
+                )
+            ]
+            if source_segment_ids:
+                db.executemany(
+                    "DELETE FROM segments_fts WHERE segment_id=?",
+                    [(segment_id,) for segment_id in source_segment_ids],
+                )
+                marks = ",".join("?" for _ in source_segment_ids)
+                db.execute(
+                    f"DELETE FROM segment_concepts WHERE segment_id IN ({marks})",
+                    tuple(source_segment_ids),
+                )
+
+            inserted_ids: list[str] = []
+            updated_ids: list[str] = []
+            unchanged_ids: list[str] = []
+
+            for segment in segments:
+                old = existing.get(segment.identity_key)
+                if old is None:
+                    db.execute(
+                        """
+                        INSERT INTO segments(
+                            segment_id, source_id, ordinal, heading, text,
+                            char_start, char_end, importance, identity_key,
+                            content_hash
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            segment.segment_id, segment.source_id,
+                            segment.ordinal, segment.heading, segment.text,
+                            segment.char_start, segment.char_end,
+                            segment.importance, segment.identity_key,
+                            segment.content_hash,
+                        ),
+                    )
+                    inserted_ids.append(segment.segment_id)
+                else:
+                    persistent_id = str(old["segment_id"])
+                    segment.segment_id = persistent_id
+                    db.execute(
+                        """
+                        UPDATE segments SET
+                            ordinal=?, heading=?, text=?, char_start=?,
+                            char_end=?, importance=?, content_hash=?
+                        WHERE segment_id=?
+                        """,
+                        (
+                            segment.ordinal, segment.heading, segment.text,
+                            segment.char_start, segment.char_end,
+                            segment.importance, segment.content_hash,
+                            persistent_id,
+                        ),
+                    )
+                    if str(old["content_hash"]) == segment.content_hash:
+                        unchanged_ids.append(persistent_id)
+                    else:
+                        updated_ids.append(persistent_id)
 
                 concept_ids: list[str] = []
                 for name in segment.concepts:
@@ -139,51 +232,65 @@ class SQLiteRepository:
                     )
                     db.execute(
                         "INSERT INTO segment_concepts VALUES(?,?,?,?)",
-                        (
-                            segment.segment_id,
-                            current_concept_id,
-                            "mentions",
-                            1.0,
-                        ),
+                        (segment.segment_id, current_concept_id, "mentions", 1.0),
                     )
 
                 db.execute(
                     "INSERT INTO segments_fts VALUES(?,?,?,?)",
                     (
-                        segment.segment_id,
-                        segment.text,
-                        segment.heading or "",
-                        " ".join(segment.concepts),
+                        segment.segment_id, segment.text,
+                        segment.heading or "", " ".join(segment.concepts),
                     ),
                 )
 
-                for index, left in enumerate(concept_ids):
-                    for right in concept_ids[index + 1:]:
-                        source_id, target_id = sorted((left, right))
-                        db.execute(
-                            """
-                            INSERT INTO concept_edges
-                            VALUES(?,?,'co_occurs',1.0,1)
-                            ON CONFLICT(
-                                source_concept_id,
-                                target_concept_id,
-                                relation
-                            )
-                            DO UPDATE SET
-                                evidence_count=evidence_count+1,
-                                weight=MIN(5.0,1.0+evidence_count*0.1)
-                            """,
-                            (source_id, target_id),
-                        )
-
+            self._rebuild_concept_edges(db)
             db.execute(
                 """
                 DELETE FROM concepts
-                WHERE concept_id NOT IN (
-                    SELECT concept_id FROM segment_concepts
-                )
+                WHERE concept_id NOT IN (SELECT concept_id FROM segment_concepts)
                 """
             )
+
+            return {
+                "inserted": inserted_ids,
+                "updated": updated_ids,
+                "unchanged": unchanged_ids,
+                "deleted": deleted_ids,
+            }
+
+    def replace_document(
+        self,
+        doc: SourceDocument,
+        segments: Sequence[MemorySegment],
+        source_kind: str = "file",
+    ) -> None:
+        """Compatibility wrapper for callers from the initial prototype."""
+        self.reconcile_document(doc, segments, source_kind=source_kind)
+
+    @staticmethod
+    def _rebuild_concept_edges(db: sqlite3.Connection) -> None:
+        db.execute("DELETE FROM concept_edges")
+        db.execute(
+            """
+            INSERT INTO concept_edges(
+                source_concept_id, target_concept_id, relation, weight,
+                evidence_count
+            )
+            SELECT
+                CASE WHEN a.concept_id < b.concept_id
+                     THEN a.concept_id ELSE b.concept_id END,
+                CASE WHEN a.concept_id < b.concept_id
+                     THEN b.concept_id ELSE a.concept_id END,
+                'co_occurs',
+                MIN(5.0, 1.0 + (COUNT(*) - 1) * 0.1),
+                COUNT(*)
+            FROM segment_concepts a
+            JOIN segment_concepts b
+              ON a.segment_id=b.segment_id
+             AND a.concept_id < b.concept_id
+            GROUP BY 1, 2
+            """
+        )
 
     def delete_source(self, path_or_id: str) -> tuple[bool, list[str]]:
         with self.connect() as db:

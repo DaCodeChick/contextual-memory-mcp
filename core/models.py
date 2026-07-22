@@ -26,6 +26,8 @@ class MemorySegment:
     text: str
     char_start: int
     char_end: int
+    identity_key: str
+    content_hash: str
     importance: float = 1.0
     concepts: list[str] = field(default_factory=list)
 

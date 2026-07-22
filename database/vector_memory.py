@@ -27,17 +27,14 @@ class VectorMemory:
             metadata={"hnsw:space": "cosine"},
         )
 
-    def replace_document(
+    def upsert_document(
         self,
         doc: SourceDocument,
         segments: Sequence[MemorySegment],
+        deleted_ids: Sequence[str] = (),
     ) -> None:
-        existing = self.collection.get(
-            where={"source_id": doc.source_id},
-            include=[],
-        )
-        if existing.get("ids"):
-            self.collection.delete(ids=existing["ids"])
+        if deleted_ids:
+            self.collection.delete(ids=list(deleted_ids))
 
         if not segments:
             return
@@ -55,7 +52,7 @@ class VectorMemory:
             ]
         )
 
-        self.collection.add(
+        self.collection.upsert(
             ids=[segment.segment_id for segment in segments],
             documents=documents,
             embeddings=embeddings,
@@ -66,10 +63,23 @@ class VectorMemory:
                     "title": doc.title,
                     "heading": segment.heading or "",
                     "importance": segment.importance,
+                    "content_hash": segment.content_hash,
                 }
                 for segment in segments
             ],
         )
+
+    def replace_document(
+        self,
+        doc: SourceDocument,
+        segments: Sequence[MemorySegment],
+    ) -> None:
+        existing = self.collection.get(
+            where={"source_id": doc.source_id},
+            include=[],
+        )
+        deleted_ids = existing.get("ids") or []
+        self.upsert_document(doc, segments, deleted_ids=deleted_ids)
 
     def search(self, query: str, limit: int = 50) -> list[dict]:
         if self.collection.count() == 0:

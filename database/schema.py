@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS segments (
     char_start INTEGER NOT NULL,
     char_end INTEGER NOT NULL,
     importance REAL NOT NULL DEFAULT 1.0,
-    UNIQUE(source_id, ordinal)
+    identity_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    UNIQUE(source_id, ordinal),
+    UNIQUE(source_id, identity_key)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(

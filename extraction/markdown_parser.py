@@ -168,13 +168,13 @@ def segment_document(
     result: list[MemorySegment] = []
     ordinal = 0
 
-    for heading, start, _end, body in _sections(doc.content):
-        for char_start, char_end, text in _window(
+    for section_index, (heading, start, _end, body) in enumerate(_sections(doc.content)):
+        for chunk_index, (char_start, char_end, text) in enumerate(_window(
             body,
             start,
             size,
             overlap,
-        ):
+        )):
             concepts = extract_concepts(text, heading)
             important_heading = heading and any(
                 keyword in heading.lower()
@@ -192,8 +192,7 @@ def segment_document(
                     segment_id=stable_id(
                         "seg",
                         doc.source_id,
-                        str(ordinal),
-                        content_hash(text),
+                        f"section:{section_index}:chunk:{chunk_index}",
                     ),
                     source_id=doc.source_id,
                     ordinal=ordinal,
@@ -201,6 +200,8 @@ def segment_document(
                     text=text,
                     char_start=char_start,
                     char_end=char_end,
+                    identity_key=f"section:{section_index}:chunk:{chunk_index}",
+                    content_hash=content_hash(text),
                     importance=importance,
                     concepts=concepts,
                 )

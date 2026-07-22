@@ -160,8 +160,12 @@ class IngestionService:
                 self.settings.chunk_size,
                 self.settings.chunk_overlap,
             )
-            self.repository.replace_document(doc, segments)
-            self.vectors.replace_document(doc, segments)
+            changes = self.repository.reconcile_document(doc, segments)
+            self.vectors.upsert_document(
+                doc,
+                segments,
+                deleted_ids=changes["deleted"],
+            )
 
             summary["indexed"] += 1
             summary["segments"] += len(segments)
@@ -174,7 +178,7 @@ class IngestionService:
         text: str,
         concepts: list[str] | None = None,
     ) -> dict:
-        source_id = stable_id("mem", title, content_hash(text))
+        source_id = stable_id("mem", title)
         doc = SourceDocument(
             source_id=source_id,
             path=Path(f"memory://{source_id}"),
@@ -202,12 +206,16 @@ class IngestionService:
                     dict.fromkeys(normalized + segment.concepts)
                 )
 
-        self.repository.replace_document(
+        changes = self.repository.reconcile_document(
             doc,
             segments,
             source_kind="memory",
         )
-        self.vectors.replace_document(doc, segments)
+        self.vectors.upsert_document(
+            doc,
+            segments,
+            deleted_ids=changes["deleted"],
+        )
 
         return {
             "source_id": source_id,
