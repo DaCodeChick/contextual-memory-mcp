@@ -59,8 +59,8 @@ class MemoryStoreConfig:
         }
 
 
-class StoreRegistry:
-    """Persistent registry plus writable overlays for locked stores."""
+class StoreOverlays:
+    """Persistent local usage and ranking overlays for locked stores."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -68,17 +68,6 @@ class StoreRegistry:
         with self._connect() as db:
             db.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS memory_stores (
-                    store_id TEXT PRIMARY KEY,
-                    display_name TEXT NOT NULL,
-                    sqlite_path TEXT NOT NULL,
-                    chroma_path TEXT NOT NULL,
-                    collection_name TEXT NOT NULL,
-                    mode INTEGER NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    priority REAL NOT NULL DEFAULT 1.0,
-                    specialty TEXT
-                );
                 CREATE TABLE IF NOT EXISTS external_memory_usage (
                     store_id TEXT NOT NULL,
                     segment_id TEXT NOT NULL,
@@ -96,75 +85,6 @@ class StoreRegistry:
         db = sqlite3.connect(self.path)
         db.row_factory = sqlite3.Row
         return db
-
-    def upsert(self, config: MemoryStoreConfig) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                INSERT INTO memory_stores(
-                    store_id, display_name, sqlite_path, chroma_path,
-                    collection_name, mode, enabled, priority, specialty
-                ) VALUES(?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(store_id) DO UPDATE SET
-                    display_name=excluded.display_name,
-                    sqlite_path=excluded.sqlite_path,
-                    chroma_path=excluded.chroma_path,
-                    collection_name=excluded.collection_name,
-                    mode=excluded.mode,
-                    enabled=excluded.enabled,
-                    priority=excluded.priority,
-                    specialty=excluded.specialty
-                """,
-                (
-                    config.store_id, config.display_name,
-                    str(config.sqlite_path), str(config.chroma_path),
-                    config.collection_name, int(config.mode),
-                    int(config.enabled), config.priority, config.specialty,
-                ),
-            )
-
-    def remove(self, store_id: str) -> bool:
-        if store_id == "main":
-            raise ValueError("The main store cannot be unmounted")
-        with self._connect() as db:
-            cursor = db.execute("DELETE FROM memory_stores WHERE store_id=?", (store_id,))
-            return cursor.rowcount > 0
-
-    def set_enabled(self, store_id: str, enabled: bool) -> MemoryStoreConfig:
-        if store_id == "main" and not enabled:
-            raise ValueError("The main store cannot be disabled")
-        with self._connect() as db:
-            cursor = db.execute(
-                "UPDATE memory_stores SET enabled=? WHERE store_id=?",
-                (int(enabled), store_id),
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Unknown memory store: {store_id}")
-        return self.get(store_id)
-
-    def list(self) -> list[MemoryStoreConfig]:
-        with self._connect() as db:
-            rows = db.execute("SELECT * FROM memory_stores ORDER BY store_id").fetchall()
-        return [
-            MemoryStoreConfig(
-                store_id=str(row["store_id"]),
-                display_name=str(row["display_name"]),
-                sqlite_path=Path(str(row["sqlite_path"])),
-                chroma_path=Path(str(row["chroma_path"])),
-                collection_name=str(row["collection_name"]),
-                mode=StoreMode(int(row["mode"])),
-                enabled=bool(row["enabled"]),
-                priority=float(row["priority"]),
-                specialty=row["specialty"],
-            )
-            for row in rows
-        ]
-
-    def get(self, store_id: str) -> MemoryStoreConfig:
-        for config in self.list():
-            if config.store_id == store_id:
-                return config
-        raise KeyError(f"Unknown memory store: {store_id}")
 
     def record_external_access(self, store_id: str, segment_ids: Iterable[str]) -> None:
         from datetime import datetime, timezone
@@ -231,30 +151,47 @@ class StoreRegistry:
         return dict(row)
 
 
-def load_store_manifest(path: Path, base_dir: Path) -> list[MemoryStoreConfig]:
-    if not path.exists():
+def write_store_manifest(store_root: Path, config: MemoryStoreConfig) -> Path:
+    store_root.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "store_id": config.store_id,
+        "display_name": config.display_name,
+        "sqlite_path": config.sqlite_path.name,
+        "chroma_path": config.chroma_path.name,
+        "collection_name": config.collection_name,
+        "mode": int(config.mode),
+        "priority": config.priority,
+        "specialty": config.specialty,
+    }
+    path = store_root / "manifest.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def discover_store_manifests(stores_root: Path) -> list[MemoryStoreConfig]:
+    if not stores_root.exists():
         return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    entries = payload.get("stores", payload) if isinstance(payload, dict) else payload
     result: list[MemoryStoreConfig] = []
-    for item in entries:
-        sqlite_path = Path(item["sqlite_path"])
-        chroma_path = Path(item["chroma_path"])
+    for manifest in sorted(stores_root.glob("*/manifest.json")):
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        store_root = manifest.parent
+        sqlite_path = Path(str(payload.get("sqlite_path", f"{store_root.name}.sqlite3")))
+        chroma_path = Path(str(payload.get("chroma_path", "chroma")))
         if not sqlite_path.is_absolute():
-            sqlite_path = base_dir / sqlite_path
+            sqlite_path = store_root / sqlite_path
         if not chroma_path.is_absolute():
-            chroma_path = base_dir / chroma_path
+            chroma_path = store_root / chroma_path
         result.append(
             MemoryStoreConfig(
-                store_id=str(item["store_id"]),
-                display_name=str(item.get("display_name", item["store_id"])),
-                sqlite_path=sqlite_path.expanduser().resolve(),
-                chroma_path=chroma_path.expanduser().resolve(),
-                collection_name=str(item.get("collection_name", "context_segments")),
-                mode=StoreMode(int(item.get("mode", 0))),
-                enabled=bool(item.get("enabled", True)),
-                priority=float(item.get("priority", 1.0)),
-                specialty=item.get("specialty"),
+                store_id=str(payload.get("store_id", store_root.name)),
+                display_name=str(payload.get("display_name", store_root.name)),
+                sqlite_path=sqlite_path.resolve(),
+                chroma_path=chroma_path.resolve(),
+                collection_name=str(payload.get("collection_name", "context_segments")),
+                mode=StoreMode(int(payload.get("mode", int(StoreMode.IMMUTABLE)))),
+                enabled=True,
+                priority=float(payload.get("priority", 1.0)),
+                specialty=payload.get("specialty"),
             )
         )
     return result

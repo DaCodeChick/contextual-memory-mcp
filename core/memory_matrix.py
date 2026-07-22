@@ -20,8 +20,9 @@ from core.stores import (
     MemoryRef,
     MemoryStoreConfig,
     StoreMode,
-    StoreRegistry,
-    load_store_manifest,
+    StoreOverlays,
+    discover_store_manifests,
+    write_store_manifest,
 )
 from database.migrations import MIGRATIONS
 from database.repositories import SQLiteRepository
@@ -168,7 +169,7 @@ class FederatedRetrievalEngine:
             local_hits = runtime.retrieval.search(
                 query, max(requested * 3, 12), record_access=False
             )
-            overlays = self.matrix.registry.overlays(
+            overlays = self.matrix.overlays.overlays(
                 config.store_id, [hit.segment_id for hit in local_hits]
             )
             for hit in local_hits:
@@ -200,11 +201,11 @@ class FederatedRetrievalEngine:
             for hit in chosen:
                 grouped.setdefault(hit.store_id, []).append(hit.segment_id)
             for store_id, ids in grouped.items():
-                config = self.matrix.registry.get(store_id)
+                config = self.matrix.store_config(store_id)
                 if config.mode == StoreMode.READ_WRITE:
                     self.matrix.store(store_id).repository.record_access(ids)
                 else:
-                    self.matrix.registry.record_external_access(store_id, ids)
+                    self.matrix.overlays.record_external_access(store_id, ids)
         return chosen
 
     def inspect_concept(self, store_id: str, concept: str, limit: int) -> dict:
@@ -245,38 +246,48 @@ class ContextualMemoryMatrix:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
         self.settings.prepare()
-        self.registry = StoreRegistry(self.settings.store_registry_path)
+        self.overlays = StoreOverlays(self.settings.overlays_path)
         self._runtimes: dict[str, MemoryStoreRuntime] = {}
-
-        self.registry.upsert(
-            MemoryStoreConfig(
-                store_id="main",
-                display_name="Main Memory",
-                sqlite_path=self.settings.sqlite_path,
-                chroma_path=self.settings.chroma_path,
-                collection_name=self.settings.collection_name,
-                mode=StoreMode.READ_WRITE,
-                enabled=True,
-                priority=1.0,
-            )
-        )
-        if self.settings.stores_file is not None:
-            for config in load_store_manifest(
-                self.settings.stores_file, self.settings.stores_file.parent
-            ):
-                if config.store_id != "main":
-                    self.registry.upsert(config)
         self.store("main")
+
+    def _main_config(self) -> MemoryStoreConfig:
+        return MemoryStoreConfig(
+            store_id="main",
+            display_name="Main Memory",
+            sqlite_path=self.settings.sqlite_path,
+            chroma_path=self.settings.chroma_path,
+            collection_name=self.settings.collection_name,
+            mode=StoreMode.READ_WRITE,
+            enabled=True,
+            priority=1.0,
+        )
+
+    def store_configs(self) -> list[MemoryStoreConfig]:
+        configs = [self._main_config(), *discover_store_manifests(self.settings.stores_dir)]
+        seen: set[str] = set()
+        result: list[MemoryStoreConfig] = []
+        for config in configs:
+            if config.store_id in seen:
+                raise ValueError(f"Duplicate memory store ID discovered: {config.store_id!r}")
+            seen.add(config.store_id)
+            result.append(config)
+        return result
+
+    def store_config(self, store_id: str) -> MemoryStoreConfig:
+        for config in self.store_configs():
+            if config.store_id == store_id:
+                return config
+        raise KeyError(f"Unknown memory store: {store_id}")
 
     def store(self, store_id: str) -> MemoryStoreRuntime:
         if store_id not in self._runtimes:
             self._runtimes[store_id] = MemoryStoreRuntime(
-                self.settings, self.registry.get(store_id)
+                self.settings, self.store_config(store_id)
             )
         return self._runtimes[store_id]
 
     def selected_store_configs(self, stores: list[str] | None = None) -> list[MemoryStoreConfig]:
-        configs = [config for config in self.registry.list() if config.enabled]
+        configs = [config for config in self.store_configs() if config.enabled]
         if stores is not None:
             wanted = set(stores)
             unknown = wanted - {config.store_id for config in configs}
@@ -325,18 +336,12 @@ class ContextualMemoryMatrix:
         sqlite_path = store_root / f"{store_id}.sqlite3"
         chroma_path = store_root / "chroma"
 
-        existing = next(
-            (config for config in self.registry.list() if config.store_id == store_id),
-            None,
-        )
-        if existing is not None or store_root.exists():
+        if store_root.exists():
             if not replace:
                 raise FileExistsError(
                     f"Memory database {store_id!r} already exists; use --replace to replace it"
                 )
             self._runtimes.pop(store_id, None)
-            if existing is not None:
-                self.registry.remove(store_id)
             shutil.rmtree(store_root, ignore_errors=True)
 
         build_config = MemoryStoreConfig(
@@ -350,19 +355,18 @@ class ContextualMemoryMatrix:
             priority=1.0,
             specialty="directory-scan",
         )
-        self.registry.upsert(build_config)
+        self._runtimes[store_id] = MemoryStoreRuntime(self.settings, build_config)
 
         try:
-            result = self.store(store_id).ingestion.scan(root, **kwargs)
+            result = self._runtimes[store_id].ingestion.scan(root, **kwargs)
         except Exception:
             self._runtimes.pop(store_id, None)
-            self.registry.remove(store_id)
             shutil.rmtree(store_root, ignore_errors=True)
             raise
 
         final_mode = StoreMode.READ_WRITE if mutable else StoreMode.IMMUTABLE
         final_config = dataclass_replace(build_config, mode=final_mode)
-        self.registry.upsert(final_config)
+        write_store_manifest(store_root, final_config)
         self._runtimes.pop(store_id, None)
 
         return {
@@ -405,7 +409,7 @@ class ContextualMemoryMatrix:
             raise StoreAccessError(
                 f"Locked stores only support overlay fields: {sorted(allowed)}"
             )
-        result = self.registry.set_overlay(ref.store_id, ref.segment_id, **kwargs)
+        result = self.overlays.set_overlay(ref.store_id, ref.segment_id, **kwargs)
         return {"memory_ref": str(ref), "store_id": ref.store_id, **result}
 
     def run_importance(self, *, apply: bool = True, store_id: str) -> ImportanceRunResult:
@@ -447,24 +451,11 @@ class ContextualMemoryMatrix:
             }
         return results
 
-    def mount_store(self, config: MemoryStoreConfig) -> dict:
-        if config.store_id == "main":
-            raise ValueError("Use main configuration for the main store")
-        self.registry.upsert(config)
-        self._runtimes.pop(config.store_id, None)
-        self.store(config.store_id)
-        return config.as_dict()
-
-    def unmount_store(self, store_id: str) -> bool:
-        self._runtimes.pop(store_id, None)
-        return self.registry.remove(store_id)
-
-    def set_store_enabled(self, store_id: str, enabled: bool) -> dict:
-        config = self.registry.set_enabled(store_id, enabled)
-        return config.as_dict()
-
     def list_stores(self) -> list[dict]:
-        return [config.as_dict() for config in self.registry.list()]
+        return [
+            {**config.as_dict(), "loaded": config.store_id in self._runtimes}
+            for config in self.store_configs()
+        ]
 
     def clear(self, store_id: str) -> dict:
         runtime = self.store(store_id)
@@ -481,7 +472,7 @@ class ContextualMemoryMatrix:
 
     def stats(self) -> dict:
         stores: dict[str, dict] = {}
-        for config in self.registry.list():
+        for config in self.store_configs():
             if not config.enabled:
                 continue
             runtime = self.store(config.store_id)

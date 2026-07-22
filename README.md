@@ -193,7 +193,8 @@ Persistent data is stored beneath `CM_DATA_DIR`, which defaults to `./data`:
 
 - `contextual_memory.sqlite3`
 - `chroma/`
-- `store_registry.sqlite3` (mounted stores and locked-store overlays)
+- `store_overlays.sqlite3` (local ranking overlays for immutable stores)
+- `stores/<name>/manifest.json` plus each scanned store database
 
 The embedding model is downloaded and cached locally by Sentence Transformers
 on first use.
@@ -242,10 +243,14 @@ stored as SQLite integers and exposed in Python as `IntEnum` values.
 
 ## Multiple memory stores
 
-The server provides a writable `main` store. Additional stores can be mounted
-as writable, read-only, or immutable databases and searched together. Returned
-memory IDs are globally qualified, for example `ghidra-core:seg_abcd`. APIs
-require store-qualified memory references and explicit write destinations.
+The server provides a writable `main` store. Scanned databases live beneath
+`data/stores/<name>/` and contain their own `manifest.json`. The filesystem is
+the source of truth: there is no separate store registry, registration step,
+mount operation, or startup fixture.
+
+`list_memory_stores` discovers manifests directly from disk. A named store is
+opened lazily when recall or another operation addresses it. Returned memory
+IDs are globally qualified, for example `ghidra-core:seg_abcd`.
 
 Store modes are SQLite integers exposed through `StoreMode`:
 
@@ -255,31 +260,30 @@ Store modes are SQLite integers exposed through `StoreMode`:
 2 IMMUTABLE
 ```
 
-Writes require an explicit `target_store`; they are never broadcast. Before a write, clients must call `list_memory_stores` whenever the destination is not already established in the current context. Store IDs must not be guessed or discovered by intentionally causing a failed write.
+Writes require an explicit `target_store`; they are never broadcast. Before a
+write, clients must call `list_memory_stores` whenever the destination is not
+already established in the current context. Store IDs must not be guessed or
+discovered by intentionally causing a failed write.
+
 Maintenance runs only against writable stores. Read-only and immutable SQLite
 databases are opened with SQLite read-only URI modes and are never migrated
 automatically. Their recall access counts and user-specific ranking choices are
-kept in the writable registry overlay instead of changing canonical content.
+kept in `store_overlays.sqlite3` instead of changing canonical content.
 
-A store manifest may be loaded at startup with `CM_STORES_FILE`:
+Creating a scanned database is sufficient to make it discoverable:
 
-```json
-{
-  "stores": [
-    {
-      "store_id": "reference",
-      "display_name": "Reference Knowledge",
-      "sqlite_path": "stores/reference/memory.sqlite3",
-      "chroma_path": "stores/reference/chroma",
-      "mode": 2,
-      "priority": 1.15,
-      "specialty": "documentation"
-    }
-  ]
-}
+```bash
+uv run contextual-memory-index scan ./project --name project-memory
 ```
 
-The MCP also exposes store listing, mounting, unmounting, filtered recall, and
-locked-memory overlays (`local_boost`, `hidden`, and `pinned_override`). This is
-the completed generic foundation for future specialties; no Ghidra-specific
-code is included yet.
+This creates:
+
+```text
+data/stores/project-memory/
+├── manifest.json
+├── project-memory.sqlite3
+└── chroma/
+```
+
+No registration or mounting command is required.
+

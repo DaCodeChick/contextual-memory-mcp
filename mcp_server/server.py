@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from mcp.server.fastmcp import FastMCP
 
 from core.enums import MemoryOrigin, MemoryState, MemoryType
 from core.memory_matrix import ContextualMemoryMatrix
-from core.stores import MemoryStoreConfig, StoreMode
 
 
 MCP_INSTRUCTIONS = """
@@ -348,7 +345,7 @@ def explain_memory_ranking(
 
 @mcp.tool()
 def list_memory_stores() -> list[dict]:
-    """Resolve valid memory-store IDs and their access modes.
+    """Resolve valid memory-store IDs by discovering them from the filesystem.
 
     Call this before any memory write when the destination store is not already
     explicitly established in the current conversation or tool context. Select
@@ -356,44 +353,6 @@ def list_memory_stores() -> list[dict]:
     for a write error to reveal valid values.
     """
     return memory.list_stores()
-
-
-@mcp.tool()
-def mount_memory_store(
-    store_id: str,
-    display_name: str,
-    sqlite_path: str,
-    chroma_path: str,
-    mode: int = int(StoreMode.IMMUTABLE),
-    priority: float = 1.0,
-    collection_name: str = "context_segments",
-    specialty: str | None = None,
-) -> dict:
-    """Mount an existing dedicated memory store. Mode: 0 writable, 1 read-only, 2 immutable."""
-    config = MemoryStoreConfig(
-        store_id=store_id,
-        display_name=display_name,
-        sqlite_path=Path(sqlite_path).expanduser().resolve(),
-        chroma_path=Path(chroma_path).expanduser().resolve(),
-        collection_name=collection_name,
-        mode=StoreMode(mode),
-        enabled=True,
-        priority=priority,
-        specialty=specialty,
-    )
-    return memory.mount_store(config)
-
-
-@mcp.tool()
-def set_memory_store_enabled(store_id: str, enabled: bool) -> dict:
-    """Enable or disable a mounted store without deleting or unmounting it."""
-    return memory.set_store_enabled(store_id, enabled)
-
-
-@mcp.tool()
-def unmount_memory_store(store_id: str) -> dict:
-    """Unmount a dedicated store without deleting its files."""
-    return {"store_id": store_id, "unmounted": memory.unmount_store(store_id)}
 
 
 @mcp.tool()

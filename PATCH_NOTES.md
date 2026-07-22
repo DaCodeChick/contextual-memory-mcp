@@ -2,7 +2,7 @@
 
 - Added integer-backed READ_WRITE, READ_ONLY, and IMMUTABLE store modes.
 - Requires store-qualified memory references and explicit write routing.
-- Added persistent store registry and startup manifest loading.
+- Added filesystem-discovered store manifests and lazy runtime opening.
 - Added federated retrieval, store priorities, filters, and qualified memory refs.
 - Added deterministic write routing and locked-store write rejection.
 - Added writable overlays for access counts, local boosts, hiding, and pin overrides.
@@ -60,4 +60,13 @@
 - Makes newly scanned databases immutable by default.
 - Added mutually exclusive `--mutable` and `--immutable` flags.
 - Added explicit `--replace`; existing named databases are never overwritten implicitly.
-- Stores scan databases under `data/stores/<name>/` and registers their final mode.
+- Stores scan databases under `data/stores/<name>/` and writes their final mode to `manifest.json`.
+
+
+## Filesystem store discovery
+
+- Removed the persistent store registry and startup store fixture.
+- Removed mount, unmount, and enable/disable MCP operations.
+- Uses `data/stores/*/manifest.json` as the single source of truth.
+- Discovers stores directly from disk and opens them lazily on first use.
+- Kept locked-store usage and ranking overlays in a separate local overlay database.

@@ -8,18 +8,25 @@ from core.config import Settings
 from core.enums import MemoryOrigin, MemoryState, MemoryType
 from core.memory_matrix import ContextualMemoryMatrix, StoreAccessError
 from core.models import SearchHit
-from core.stores import MemoryRef, MemoryStoreConfig, StoreMode, StoreRegistry
+from core.stores import (
+    MemoryRef,
+    MemoryStoreConfig,
+    StoreMode,
+    StoreOverlays,
+    discover_store_manifests,
+    write_store_manifest,
+)
 from database.repositories import SQLiteRepository
 
 
-def make_locked_store(tmp_path: Path, store_id: str = "reference") -> MemoryStoreConfig:
-    root = tmp_path / store_id
+def make_locked_store(data_dir: Path, store_id: str = "reference") -> MemoryStoreConfig:
+    root = data_dir / "stores" / store_id
     sqlite_path = root / "memory.sqlite3"
     chroma_path = root / "chroma"
     root.mkdir(parents=True)
     chroma_path.mkdir()
     SQLiteRepository(sqlite_path).initialize()
-    return MemoryStoreConfig(
+    config = MemoryStoreConfig(
         store_id=store_id,
         display_name="Reference Store",
         sqlite_path=sqlite_path,
@@ -27,6 +34,8 @@ def make_locked_store(tmp_path: Path, store_id: str = "reference") -> MemoryStor
         mode=StoreMode.IMMUTABLE,
         priority=1.25,
     )
+    write_store_manifest(root, config)
+    return config
 
 
 def test_memory_ref_requires_store_qualification_and_round_trips() -> None:
@@ -35,16 +44,15 @@ def test_memory_ref_requires_store_qualification_and_round_trips() -> None:
     assert str(MemoryRef.parse("ghidra:seg_2")) == "ghidra:seg_2"
 
 
-def test_registry_persists_integer_modes_and_overlays(tmp_path: Path) -> None:
-    registry = StoreRegistry(tmp_path / "registry.sqlite3")
+def test_filesystem_manifest_persists_integer_modes_and_overlays(tmp_path: Path) -> None:
     config = make_locked_store(tmp_path)
-    registry.upsert(config)
+    discovered = discover_store_manifests(tmp_path / "stores")
+    assert discovered[0].store_id == "reference"
+    assert discovered[0].mode is StoreMode.IMMUTABLE
+    assert discovered[0].priority == 1.25
 
-    loaded = registry.get("reference")
-    assert loaded.mode is StoreMode.IMMUTABLE
-    assert loaded.priority == 1.25
-
-    overlay = registry.set_overlay(
+    overlays = StoreOverlays(tmp_path / "overlays.sqlite3")
+    overlay = overlays.set_overlay(
         "reference", "segment", local_boost=0.4, hidden=True,
         pinned_override=True,
     )
@@ -53,12 +61,10 @@ def test_registry_persists_integer_modes_and_overlays(tmp_path: Path) -> None:
     assert overlay["pinned_override"] == 1
 
 
-def test_locked_store_rejects_writes_and_is_skipped_by_maintenance(
-    tmp_path: Path,
-) -> None:
-    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "main"))
-    config = make_locked_store(tmp_path)
-    matrix.mount_store(config)
+def test_locked_store_rejects_writes_and_is_skipped_by_maintenance(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    make_locked_store(data_dir)
+    matrix = ContextualMemoryMatrix(Settings(data_dir=data_dir))
 
     with pytest.raises(StoreAccessError):
         matrix.remember(
@@ -74,9 +80,10 @@ def test_locked_store_rejects_writes_and_is_skipped_by_maintenance(
     assert result["reference"] == {"skipped": True, "reason": "IMMUTABLE"}
 
 
-def test_locked_store_weight_changes_use_registry_overlay(tmp_path: Path) -> None:
-    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "main"))
-    matrix.mount_store(make_locked_store(tmp_path))
+def test_locked_store_weight_changes_use_overlay_database(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    make_locked_store(data_dir)
+    matrix = ContextualMemoryMatrix(Settings(data_dir=data_dir))
 
     result = matrix.update_weighting(
         "reference:segment", local_boost=0.75, hidden=False,
@@ -139,12 +146,10 @@ def make_hit(segment_id: str, score: float) -> SearchHit:
     )
 
 
-def test_federated_retrieval_qualifies_ids_and_applies_store_priority(
-    tmp_path: Path,
-) -> None:
-    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "main"))
-    config = make_locked_store(tmp_path)
-    matrix.registry.upsert(config)
+def test_federated_retrieval_discovers_store_and_applies_priority(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    make_locked_store(data_dir)
+    matrix = ContextualMemoryMatrix(Settings(data_dir=data_dir))
 
     matrix._runtimes["main"] = FakeRuntime(make_hit("main-hit", 0.8))  # type: ignore[assignment]
     matrix._runtimes["reference"] = FakeRuntime(make_hit("locked-hit", 0.7))  # type: ignore[assignment]
@@ -156,76 +161,70 @@ def test_federated_retrieval_qualifies_ids_and_applies_store_priority(
     ]
     assert hits[0].score == pytest.approx(0.875)
 
-    overlay = matrix.registry.overlays("reference", ["locked-hit"])
+    overlay = matrix.overlays.overlays("reference", ["locked-hit"])
     assert overlay["locked-hit"]["access_count"] == 1
     main_runtime = matrix._runtimes["main"]
     assert main_runtime.repository.accesses == ["main-hit"]  # type: ignore[attr-defined]
 
 
-def test_main_store_cannot_be_unmounted(tmp_path: Path) -> None:
-    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path))
-    with pytest.raises(ValueError):
-        matrix.unmount_store("main")
+def test_store_list_is_derived_from_filesystem(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    make_locked_store(data_dir)
+    matrix = ContextualMemoryMatrix(Settings(data_dir=data_dir))
+    stores = {item["store_id"]: item for item in matrix.list_stores()}
+    assert set(stores) == {"main", "reference"}
+    assert stores["main"]["loaded"] is True
+    assert stores["reference"]["loaded"] is False
 
 
-def test_store_can_be_disabled_but_main_cannot(tmp_path: Path) -> None:
-    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "main"))
-    matrix.mount_store(make_locked_store(tmp_path))
-    result = matrix.set_store_enabled("reference", False)
-    assert result["enabled"] is False
-    assert [item.store_id for item in matrix.selected_store_configs()] == ["main"]
-    with pytest.raises(ValueError):
-        matrix.set_store_enabled("main", False)
-
-
-def test_scan_store_id_uses_directory_name_and_normalizes_explicit_name(
-    tmp_path: Path,
-) -> None:
+def test_scan_store_id_uses_directory_name_and_normalizes_explicit_name(tmp_path: Path) -> None:
     directory = tmp_path / "My Project"
     directory.mkdir()
     assert ContextualMemoryMatrix._scan_store_id(directory, None) == "My-Project"
     assert ContextualMemoryMatrix._scan_store_id(directory, "  Custom Database  ") == "Custom-Database"
 
 
-def test_scan_creates_immutable_named_store_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "data"))
-
+def fake_runtime_class(result: dict):
     class FakeIngestion:
         def scan(self, directory: Path, **kwargs: object) -> dict:
-            assert directory == source.resolve()
-            return {"discovered": 0, "indexed": 0, "segments": 0}
+            return result
 
-    class FakeRuntime:
-        ingestion = FakeIngestion()
+    class Runtime:
+        def __init__(self, settings: Settings, config: MemoryStoreConfig) -> None:
+            self.ingestion = FakeIngestion()
 
-    monkeypatch.setattr(matrix, "store", lambda store_id: FakeRuntime())
+    return Runtime
+
+
+def test_scan_creates_immutable_manifest_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    data_dir = tmp_path / "data"
+    matrix = ContextualMemoryMatrix(Settings(data_dir=data_dir))
+    monkeypatch.setattr(
+        "core.memory_matrix.MemoryStoreRuntime",
+        fake_runtime_class({"discovered": 0, "indexed": 0, "segments": 0}),
+    )
+
     result = matrix.scan(source, name="Reference DB")
 
     assert result["store_id"] == "Reference-DB"
     assert result["mutable"] is False
     assert result["mode_name"] == "IMMUTABLE"
-    assert matrix.registry.get("Reference-DB").mode is StoreMode.IMMUTABLE
+    config = matrix.store_config("Reference-DB")
+    assert config.mode is StoreMode.IMMUTABLE
+    assert (data_dir / "stores" / "Reference-DB" / "manifest.json").exists()
 
 
-def test_scan_mutable_and_replace_are_explicit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_scan_mutable_and_replace_are_explicit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "source"
     source.mkdir()
     matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "data"))
+    monkeypatch.setattr(
+        "core.memory_matrix.MemoryStoreRuntime",
+        fake_runtime_class({"discovered": 0, "indexed": 0, "segments": 0}),
+    )
 
-    class FakeIngestion:
-        def scan(self, directory: Path, **kwargs: object) -> dict:
-            return {"discovered": 0, "indexed": 0, "segments": 0}
-
-    class FakeRuntime:
-        ingestion = FakeIngestion()
-
-    monkeypatch.setattr(matrix, "store", lambda store_id: FakeRuntime())
     first = matrix.scan(source, mutable=True)
     assert first["mode_name"] == "READ_WRITE"
 
@@ -234,4 +233,4 @@ def test_scan_mutable_and_replace_are_explicit(
 
     replaced = matrix.scan(source, mutable=True, replace=True)
     assert replaced["store_id"] == "source"
-    assert matrix.registry.get("source").mode is StoreMode.READ_WRITE
+    assert matrix.store_config("source").mode is StoreMode.READ_WRITE

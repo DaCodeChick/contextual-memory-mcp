@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     collection_name: str = "context_segments"
-    stores_file: Path | None = None
 
     chunk_size: int = Field(default=1800, ge=300, le=12000)
     chunk_overlap: int = Field(default=220, ge=0, le=3000)
@@ -88,8 +87,6 @@ class Settings(BaseSettings):
     def prepare(self) -> None:
         self.data_dir = self.data_dir.expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        if self.stores_file is not None:
-            self.stores_file = self.stores_file.expanduser().resolve()
 
     @property
     def sqlite_path(self) -> Path:
@@ -100,5 +97,9 @@ class Settings(BaseSettings):
         return self.data_dir / "chroma"
 
     @property
-    def store_registry_path(self) -> Path:
-        return self.data_dir / "store_registry.sqlite3"
+    def overlays_path(self) -> Path:
+        return self.data_dir / "store_overlays.sqlite3"
+
+    @property
+    def stores_dir(self) -> Path:
+        return self.data_dir / "stores"
