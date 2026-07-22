@@ -176,3 +176,62 @@ def test_store_can_be_disabled_but_main_cannot(tmp_path: Path) -> None:
     assert [item.store_id for item in matrix.selected_store_configs()] == ["main"]
     with pytest.raises(ValueError):
         matrix.set_store_enabled("main", False)
+
+
+def test_scan_store_id_uses_directory_name_and_normalizes_explicit_name(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "My Project"
+    directory.mkdir()
+    assert ContextualMemoryMatrix._scan_store_id(directory, None) == "My-Project"
+    assert ContextualMemoryMatrix._scan_store_id(directory, "  Custom Database  ") == "Custom-Database"
+
+
+def test_scan_creates_immutable_named_store_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "data"))
+
+    class FakeIngestion:
+        def scan(self, directory: Path, **kwargs: object) -> dict:
+            assert directory == source.resolve()
+            return {"discovered": 0, "indexed": 0, "segments": 0}
+
+    class FakeRuntime:
+        ingestion = FakeIngestion()
+
+    monkeypatch.setattr(matrix, "store", lambda store_id: FakeRuntime())
+    result = matrix.scan(source, name="Reference DB")
+
+    assert result["store_id"] == "Reference-DB"
+    assert result["mutable"] is False
+    assert result["mode_name"] == "IMMUTABLE"
+    assert matrix.registry.get("Reference-DB").mode is StoreMode.IMMUTABLE
+
+
+def test_scan_mutable_and_replace_are_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    matrix = ContextualMemoryMatrix(Settings(data_dir=tmp_path / "data"))
+
+    class FakeIngestion:
+        def scan(self, directory: Path, **kwargs: object) -> dict:
+            return {"discovered": 0, "indexed": 0, "segments": 0}
+
+    class FakeRuntime:
+        ingestion = FakeIngestion()
+
+    monkeypatch.setattr(matrix, "store", lambda store_id: FakeRuntime())
+    first = matrix.scan(source, mutable=True)
+    assert first["mode_name"] == "READ_WRITE"
+
+    with pytest.raises(FileExistsError):
+        matrix.scan(source, mutable=True)
+
+    replaced = matrix.scan(source, mutable=True, replace=True)
+    assert replaced["store_id"] == "source"
+    assert matrix.registry.get("source").mode is StoreMode.READ_WRITE

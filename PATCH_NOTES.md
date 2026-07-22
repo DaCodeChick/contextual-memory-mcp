@@ -52,3 +52,12 @@
 - Clarified that `store_memory_candidate` must not replace `store_memory` for
   information the user directly stated.
 
+
+## Named scan databases
+
+- Replaced the scan command's required `--store` argument with optional `--name`.
+- Derives the database name from the scanned directory when `--name` is omitted.
+- Makes newly scanned databases immutable by default.
+- Added mutually exclusive `--mutable` and `--immutable` flags.
+- Added explicit `--replace`; existing named databases are never overwritten implicitly.
+- Stores scan databases under `data/stores/<name>/` and registers their final mode.

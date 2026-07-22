@@ -42,10 +42,31 @@ machine-learning dependencies.
 
 ## Index a directory
 
-The source directory is selected by the user at scan time:
+The source directory is selected by the user at scan time. By default, the
+database name is derived from the directory name and the completed database is
+immutable:
 
 ```bash
 uv run contextual-memory-index scan /path/to/saved/prompts
+```
+
+Provide an explicit database name with `--name`:
+
+```bash
+uv run contextual-memory-index scan /path/to/saved/prompts --name prompt-library
+```
+
+Keep the resulting database writable with `--mutable`:
+
+```bash
+uv run contextual-memory-index scan /path/to/saved/prompts --name prompt-library --mutable
+```
+
+An existing database is never overwritten implicitly. Use `--replace` to
+replace the database with the resolved name:
+
+```bash
+uv run contextual-memory-index scan /path/to/saved/prompts --name prompt-library --replace
 ```
 
 Exclude subdirectories by name or relative path:

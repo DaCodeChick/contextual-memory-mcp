@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import replace as dataclass_replace
 from functools import cached_property
 from pathlib import Path
+import re
+import shutil
 from typing import Iterable
 
 from core.config import Settings
@@ -296,10 +298,83 @@ class ContextualMemoryMatrix:
         result = self.store(store_id).ingestion.remember(**kwargs)
         return {"store_id": store_id, **result}
 
-    def scan(self, directory: Path, *, target_store: str, **kwargs) -> dict:
-        store_id = target_store
-        result = self.store(store_id).ingestion.scan(directory, **kwargs)
-        return {"store_id": store_id, **result}
+    @staticmethod
+    def _scan_store_id(directory: Path, name: str | None) -> str:
+        raw = (name if name is not None else directory.expanduser().resolve().name).strip()
+        if not raw:
+            raise ValueError("The scan database name cannot be empty")
+        store_id = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-._")
+        if not store_id:
+            raise ValueError(f"Invalid scan database name: {raw!r}")
+        if store_id == "main":
+            raise ValueError("The reserved database name 'main' cannot be used for scans")
+        return store_id
+
+    def scan(
+        self,
+        directory: Path,
+        *,
+        name: str | None = None,
+        mutable: bool = False,
+        replace: bool = False,
+        **kwargs,
+    ) -> dict:
+        root = directory.expanduser().resolve()
+        store_id = self._scan_store_id(root, name)
+        store_root = self.settings.data_dir / "stores" / store_id
+        sqlite_path = store_root / f"{store_id}.sqlite3"
+        chroma_path = store_root / "chroma"
+
+        existing = next(
+            (config for config in self.registry.list() if config.store_id == store_id),
+            None,
+        )
+        if existing is not None or store_root.exists():
+            if not replace:
+                raise FileExistsError(
+                    f"Memory database {store_id!r} already exists; use --replace to replace it"
+                )
+            self._runtimes.pop(store_id, None)
+            if existing is not None:
+                self.registry.remove(store_id)
+            shutil.rmtree(store_root, ignore_errors=True)
+
+        build_config = MemoryStoreConfig(
+            store_id=store_id,
+            display_name=name.strip() if name is not None else root.name,
+            sqlite_path=sqlite_path,
+            chroma_path=chroma_path,
+            collection_name=self.settings.collection_name,
+            mode=StoreMode.READ_WRITE,
+            enabled=True,
+            priority=1.0,
+            specialty="directory-scan",
+        )
+        self.registry.upsert(build_config)
+
+        try:
+            result = self.store(store_id).ingestion.scan(root, **kwargs)
+        except Exception:
+            self._runtimes.pop(store_id, None)
+            self.registry.remove(store_id)
+            shutil.rmtree(store_root, ignore_errors=True)
+            raise
+
+        final_mode = StoreMode.READ_WRITE if mutable else StoreMode.IMMUTABLE
+        final_config = dataclass_replace(build_config, mode=final_mode)
+        self.registry.upsert(final_config)
+        self._runtimes.pop(store_id, None)
+
+        return {
+            "store_id": store_id,
+            "name": final_config.display_name,
+            "mutable": mutable,
+            "mode": int(final_mode),
+            "mode_name": final_mode.name,
+            "sqlite_path": str(sqlite_path),
+            "chroma_path": str(chroma_path),
+            **result,
+        }
 
     def update_lifecycle(self, memory_ref: str, **kwargs) -> dict:
         ref = MemoryRef.parse(memory_ref)

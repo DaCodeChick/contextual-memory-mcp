@@ -33,9 +33,28 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     scan.add_argument(
-        "--store",
-        required=True,
-        help="Writable target store ID.",
+        "--name",
+        metavar="NAME",
+        help=(
+            "Database name. When omitted, the name is derived from the "
+            "scanned directory."
+        ),
+    )
+    mutability = scan.add_mutually_exclusive_group()
+    mutability.add_argument(
+        "--mutable",
+        action="store_true",
+        help="Keep the scanned database writable after indexing.",
+    )
+    mutability.add_argument(
+        "--immutable",
+        action="store_true",
+        help="Lock the scanned database after indexing (default).",
+    )
+    scan.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace an existing database with the resolved name.",
     )
     scan.add_argument(
         "--force",
@@ -69,7 +88,9 @@ def main() -> None:
     if args.command == "scan":
         result = memory.scan(
             directory=args.directory,
-            target_store=args.store,
+            name=args.name,
+            mutable=args.mutable,
+            replace=args.replace,
             force=args.force,
             excludes=args.exclude,
         )
