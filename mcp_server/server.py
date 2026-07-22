@@ -18,22 +18,14 @@ say "remember this", and you must not ask for permission merely because a fact
 may be stored. Memory capture is an internal action and should not interrupt or
 be announced in the conversational response.
 
-Store direct user statements as EXPLICIT_USER memories. Stable identity,
-preferences, relationships, ongoing projects, durable decisions, recurring
-constraints, significant autobiographical facts, and reusable procedures are
-normally ACTIVE. One-off anecdotes, uncertain relevance, sensitive personal
-history, and facts that may need reinforcement may be stored as CANDIDATE
-instead of being discarded or subjected to a permission prompt.
-
-Use store_memory_candidate for model inferences, interpretations, guesses, or
-other information not directly stated by the user. Never present an inference
-as a direct user statement.
+Store direct user statements with store_memory. Use store_memory_candidate only
+for model inferences, interpretations, guesses, or other information not directly
+stated by the user. Never present an inference as a direct user statement.
 
 Do not store transient chatter, authentication secrets, financial credentials,
 private keys, session tokens, or information the user explicitly asks not to
-retain. Do not equate emotional intensity with retrieval importance. Sensitive
-memories should generally use conservative importance and CANDIDATE state unless
-clear long-term relevance supports activation.
+retain. The server determines lifecycle state, type, importance, confidence, and
+source quality.
 """.strip()
 
 
@@ -77,8 +69,9 @@ def recall_memory(
 @mcp.tool()
 def store_memory(
     target_store: str,
+    title: str,
     content: str,
-    concepts: list[str] | None = None
+    concepts: list[str] | None = None,
 ) -> dict:
     """Silently capture durable information directly stated by the user.
 
@@ -87,9 +80,14 @@ def store_memory(
     storage, and you must not ask permission solely to call this tool. Continue
     the conversation normally after the call without announcing routine storage.
 
+    The server determines lifecycle state, memory type, importance, confidence,
+    source quality, and origin metadata.
+
     Args:
         target_store:
             Explicit writable store receiving the memory.
+        title:
+            A concise, descriptive title for the stored memory.
         content:
             A complete standalone statement preserving what the user said.
         concepts:
@@ -97,16 +95,19 @@ def store_memory(
     """
     return memory.remember(
         target_store=target_store,
+        title=title,
         text=content,
         concepts=concepts,
+        memory_origin=MemoryOrigin.EXPLICIT_USER,
     )
 
 
 @mcp.tool()
 def store_memory_candidate(
     target_store: str,
+    title: str,
     content: str,
-    concepts: list[str] | None = None
+    concepts: list[str] | None = None,
 ) -> dict:
     """Silently store a model inference as a non-recallable candidate.
 
@@ -115,9 +116,14 @@ def store_memory_candidate(
     to retain the candidate, and never use this tool to rewrite a direct user
     statement as though it were a model inference.
 
+    The server determines lifecycle state, memory type, importance, confidence,
+    source quality, and origin metadata.
+
     Args:
+        target_store:
+            Explicit writable store receiving the candidate.
         title:
-            A concise descriptive title.
+            A concise, descriptive title for the inferred memory.
         content:
             The proposed memory in standalone form.
         concepts:
@@ -125,9 +131,10 @@ def store_memory_candidate(
     """
     return memory.remember(
         target_store=target_store,
+        title=title,
         text=content,
         concepts=concepts,
-        memory_origin=MemoryOrigin.MODEL_INFERENCE
+        memory_origin=MemoryOrigin.MODEL_INFERENCE,
     )
 
 

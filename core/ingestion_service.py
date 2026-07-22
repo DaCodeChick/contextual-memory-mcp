@@ -183,6 +183,7 @@ class IngestionService:
 
     def remember(
         self,
+        title: str,
         text: str,
         concepts: list[str] | None = None,
         *,
@@ -204,9 +205,13 @@ class IngestionService:
             self.settings.chunk_size,
             self.settings.chunk_overlap,
         )
-        state = MemoryState.ACTIVE
-        kind = MemoryType.UNKNOWN
         origin = coerce_enum(MemoryOrigin, memory_origin)
+        if origin == MemoryOrigin.MODEL_INFERENCE:
+            state = MemoryState.CANDIDATE
+            kind = MemoryType.INFERENCE
+        else:
+            state = MemoryState.ACTIVE
+            kind = MemoryType.UNKNOWN
         importance_value = self.settings.automatic_memory_importance
         confidence_value = self.settings.automatic_memory_confidence
         source_quality_value = self.settings.automatic_memory_source_quality

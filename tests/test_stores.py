@@ -65,6 +65,7 @@ def test_locked_store_rejects_writes_and_is_skipped_by_maintenance(
             target_store="reference",
             title="No write",
             text="This must be rejected",
+            memory_origin=MemoryOrigin.EXPLICIT_USER,
         )
 
     result = matrix.run_maintenance(apply=False, stores=["reference"])

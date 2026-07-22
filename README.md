@@ -106,18 +106,15 @@ recall_memory(
 Silently captures durable information directly stated by the user. The model
 should call it automatically; the user does not need to say “remember this,”
 and routine storage must not trigger a permission question or an announcement.
-Stable information may be stored as active, while one-off or sensitive material
-may be retained conservatively as a candidate.
-
-Direct-user memories default to neutral importance (`0.5`) rather than maximum
-importance. Confidence and source quality default to `1.0`, and callers may
-provide explicit scores when justified.
+Direct-user memories are stored as active records. The server assigns lifecycle,
+type, importance, confidence, and source-quality metadata; callers do not provide
+those policy fields.
 
 ### `store_memory_candidate`
 
-Silently stores model-generated hypotheses and interpretations as candidates.
-It is not a substitute for `store_memory` when the user directly stated the
-information.
+Silently stores model-generated hypotheses and interpretations as candidate
+inferences. It is not a substitute for `store_memory` when the user directly
+stated the information. The server assigns all lifecycle and scoring metadata.
 
 ### `explore_memory`
 
