@@ -103,7 +103,7 @@ class MemoryStoreRuntime:
     @cached_property
     def web_acquisition(self) -> WebAcquisitionService:
         self.require_writable()
-        return WebAcquisitionService(self.ingestion)
+        return WebAcquisitionService(self.ingestion, settings=self.settings)
 
     @cached_property
     def lifecycle(self) -> LifecycleService:

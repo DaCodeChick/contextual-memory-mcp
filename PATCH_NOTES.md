@@ -70,3 +70,11 @@
 - Uses `data/stores/*/manifest.json` as the single source of truth.
 - Discovers stores directly from disk and opens them lazily on first use.
 - Kept locked-store usage and ranking overlays in a separate local overlay database.
+
+## Search provider fallback chain
+
+- Added provider-neutral search implementations for Exa, Brave Search, Tavily, SearXNG, and DuckDuckGo.
+- Added configurable provider priority with automatic fallback after provider errors or empty results.
+- Providers requiring credentials are skipped when not configured.
+- DuckDuckGo remains the dependency-free final fallback.
+- Added provider-chain tests covering errors, empty results, total failure, and configuration-based selection.

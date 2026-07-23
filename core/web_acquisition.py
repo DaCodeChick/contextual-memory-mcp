@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from providers.web import DuckDuckGoSearchProvider, SearchProvider, WebFetcher
+from providers.web import SearchProvider, WebFetcher, build_search_provider
 
 
 @dataclass(frozen=True)
@@ -28,10 +28,11 @@ class AcquisitionResult:
 
 
 class WebAcquisitionService:
-    def __init__(self, ingestion, *, search: SearchProvider | None = None, fetcher: WebFetcher | None = None) -> None:
+    def __init__(self, ingestion, *, settings=None, search: SearchProvider | None = None, fetcher: WebFetcher | None = None) -> None:
         self.ingestion = ingestion
-        self.search_provider = search or DuckDuckGoSearchProvider()
-        self.fetcher = fetcher or WebFetcher()
+        effective_settings = settings or ingestion.settings
+        self.search_provider = search or build_search_provider(effective_settings)
+        self.fetcher = fetcher or WebFetcher(timeout=effective_settings.web_search_timeout)
 
     def acquire(self, query: str, *, max_results: int = 8, max_pages: int = 4) -> AcquisitionResult:
         candidates = self.search_provider.search(query, limit=max_results)

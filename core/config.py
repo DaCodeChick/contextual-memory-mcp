@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     web_acquisition_max_results: int = Field(default=8, ge=1, le=30)
     web_acquisition_max_pages: int = Field(default=4, ge=1, le=12)
     web_acquisition_store: str = "main"
+    web_search_providers: CsvList = ["exa", "brave", "tavily", "searxng", "duckduckgo"]
+    web_search_timeout: float = Field(default=12.0, gt=0.0, le=120.0)
+    exa_api_key: str | None = None
+    brave_search_api_key: str | None = None
+    tavily_api_key: str | None = None
+    searxng_url: str | None = None
 
     include_globs: CsvList = ["*.md", "*.txt", "*.prompt"]
     exclude_dirs: CsvList = [

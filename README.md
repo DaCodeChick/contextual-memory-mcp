@@ -282,3 +282,18 @@ data/stores/project-memory/
 
 No registration or mounting command is required.
 
+
+## Web search providers
+
+Automatic web acquisition can use multiple search providers in priority order. Providers that need credentials are skipped unless configured, and failures automatically fall through to the next provider.
+
+```env
+CM_WEB_SEARCH_PROVIDERS=exa,brave,tavily,searxng,duckduckgo
+CM_WEB_SEARCH_TIMEOUT=12
+CM_EXA_API_KEY=
+CM_BRAVE_SEARCH_API_KEY=
+CM_TAVILY_API_KEY=
+CM_SEARXNG_URL=http://localhost:8080
+```
+
+With no API keys or SearXNG URL, DuckDuckGo is used as the zero-configuration fallback. For a self-hosted setup, place `searxng` first and set `CM_SEARXNG_URL`. The configured SearXNG instance must permit JSON search responses.

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html.parser import HTMLParser
+import json
 import re
-from typing import Protocol
-from urllib.parse import parse_qs, unquote, urlparse
+from typing import Iterable, Protocol
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -23,7 +24,73 @@ class WebPage:
 
 
 class SearchProvider(Protocol):
+    name: str
+
     def search(self, query: str, *, limit: int = 8) -> list[SearchResult]: ...
+
+
+class SearchProviderError(RuntimeError):
+    pass
+
+
+def _read_json(request: Request, *, timeout: float, max_bytes: int = 2_000_000) -> dict:
+    with urlopen(request, timeout=timeout) as response:
+        data = response.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise SearchProviderError("Search response exceeded maximum size")
+    try:
+        value = json.loads(data.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as exc:
+        raise SearchProviderError("Search provider returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise SearchProviderError("Search provider returned an unexpected payload")
+    return value
+
+
+def _deduplicate(results: Iterable[SearchResult], limit: int) -> list[SearchResult]:
+    seen: set[str] = set()
+    output: list[SearchResult] = []
+    for result in results:
+        normalized = result.url.rstrip("/")
+        if not normalized or normalized in seen:
+            continue
+        if not result.url.startswith(("http://", "https://")):
+            continue
+        seen.add(normalized)
+        output.append(result)
+        if len(output) >= max(1, limit):
+            break
+    return output
+
+
+class ProviderChain:
+    """Try providers in priority order, falling back on errors or empty results."""
+
+    name = "chain"
+
+    def __init__(self, providers: Iterable[SearchProvider]) -> None:
+        self.providers = tuple(providers)
+        if not self.providers:
+            raise ValueError("ProviderChain requires at least one provider")
+        self.last_errors: tuple[str, ...] = ()
+        self.last_provider: str | None = None
+
+    def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
+        errors: list[str] = []
+        self.last_provider = None
+        for provider in self.providers:
+            try:
+                results = provider.search(query, limit=limit)
+            except Exception as exc:
+                errors.append(f"{provider.name}: {exc}")
+                continue
+            if results:
+                self.last_errors = tuple(errors)
+                self.last_provider = provider.name
+                return results
+            errors.append(f"{provider.name}: no results")
+        self.last_errors = tuple(errors)
+        raise SearchProviderError("All search providers failed: " + "; ".join(errors))
 
 
 class _SearchResultParser(HTMLParser):
@@ -70,8 +137,9 @@ def _decode_duckduckgo_url(value: str) -> str:
 
 
 class DuckDuckGoSearchProvider:
-    """Dependency-free web discovery using DuckDuckGo's HTML endpoint."""
+    """Dependency-free fallback using DuckDuckGo's HTML endpoint."""
 
+    name = "duckduckgo"
     endpoint = "https://html.duckduckgo.com/html/"
 
     def __init__(self, *, timeout: float = 12.0, user_agent: str = "ContextualMemoryMCP/0.1") -> None:
@@ -79,32 +147,97 @@ class DuckDuckGoSearchProvider:
         self.user_agent = user_agent
 
     def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
-        from urllib.parse import urlencode
-
         body = urlencode({"q": query}).encode("utf-8")
         request = Request(
             self.endpoint,
             data=body,
-            headers={
-                "User-Agent": self.user_agent,
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
+            headers={"User-Agent": self.user_agent, "Content-Type": "application/x-www-form-urlencoded"},
         )
         with urlopen(request, timeout=self.timeout) as response:
             html = response.read(2_000_000).decode("utf-8", errors="replace")
         parser = _SearchResultParser()
         parser.feed(html)
-        seen: set[str] = set()
-        results: list[SearchResult] = []
-        for result in parser.results:
-            normalized = result.url.rstrip("/")
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            results.append(result)
-            if len(results) >= max(1, limit):
-                break
-        return results
+        return _deduplicate(parser.results, limit)
+
+
+class BraveSearchProvider:
+    name = "brave"
+    endpoint = "https://api.search.brave.com/res/v1/web/search"
+
+    def __init__(self, api_key: str, *, timeout: float = 12.0) -> None:
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
+        url = f"{self.endpoint}?{urlencode({'q': query, 'count': min(max(1, limit), 20)})}"
+        payload = _read_json(Request(url, headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"}), timeout=self.timeout)
+        items = ((payload.get("web") or {}).get("results") or [])
+        return _deduplicate((SearchResult(str(item.get("title") or item.get("url") or ""), str(item.get("url") or ""), str(item.get("description") or "")) for item in items if isinstance(item, dict)), limit)
+
+
+class TavilySearchProvider:
+    name = "tavily"
+    endpoint = "https://api.tavily.com/search"
+
+    def __init__(self, api_key: str, *, timeout: float = 15.0) -> None:
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
+        data = json.dumps({"query": query, "max_results": min(max(1, limit), 20), "search_depth": "basic", "include_answer": False, "include_raw_content": False}).encode("utf-8")
+        request = Request(self.endpoint, data=data, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", "Accept": "application/json"})
+        payload = _read_json(request, timeout=self.timeout)
+        items = payload.get("results") or []
+        return _deduplicate((SearchResult(str(item.get("title") or item.get("url") or ""), str(item.get("url") or ""), str(item.get("content") or "")) for item in items if isinstance(item, dict)), limit)
+
+
+class ExaSearchProvider:
+    name = "exa"
+    endpoint = "https://api.exa.ai/search"
+
+    def __init__(self, api_key: str, *, timeout: float = 15.0) -> None:
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
+        data = json.dumps({"query": query, "numResults": min(max(1, limit), 20), "type": "auto"}).encode("utf-8")
+        request = Request(self.endpoint, data=data, headers={"x-api-key": self.api_key, "Content-Type": "application/json", "Accept": "application/json"})
+        payload = _read_json(request, timeout=self.timeout)
+        items = payload.get("results") or []
+        return _deduplicate((SearchResult(str(item.get("title") or item.get("url") or ""), str(item.get("url") or ""), str(item.get("text") or item.get("summary") or "")) for item in items if isinstance(item, dict)), limit)
+
+
+class SearXNGSearchProvider:
+    name = "searxng"
+
+    def __init__(self, base_url: str, *, timeout: float = 12.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
+        url = f"{self.base_url}/search?{urlencode({'q': query, 'format': 'json'})}"
+        payload = _read_json(Request(url, headers={"Accept": "application/json"}), timeout=self.timeout)
+        items = payload.get("results") or []
+        return _deduplicate((SearchResult(str(item.get("title") or item.get("url") or ""), str(item.get("url") or ""), str(item.get("content") or "")) for item in items if isinstance(item, dict)), limit)
+
+
+def build_search_provider(settings) -> SearchProvider:
+    providers: list[SearchProvider] = []
+    for name in settings.web_search_providers:
+        normalized = name.strip().lower()
+        if normalized == "exa" and settings.exa_api_key:
+            providers.append(ExaSearchProvider(settings.exa_api_key, timeout=settings.web_search_timeout))
+        elif normalized == "brave" and settings.brave_search_api_key:
+            providers.append(BraveSearchProvider(settings.brave_search_api_key, timeout=settings.web_search_timeout))
+        elif normalized == "tavily" and settings.tavily_api_key:
+            providers.append(TavilySearchProvider(settings.tavily_api_key, timeout=settings.web_search_timeout))
+        elif normalized == "searxng" and settings.searxng_url:
+            providers.append(SearXNGSearchProvider(settings.searxng_url, timeout=settings.web_search_timeout))
+        elif normalized == "duckduckgo":
+            providers.append(DuckDuckGoSearchProvider(timeout=settings.web_search_timeout))
+    if not providers:
+        providers.append(DuckDuckGoSearchProvider(timeout=settings.web_search_timeout))
+    return providers[0] if len(providers) == 1 else ProviderChain(providers)
 
 
 class _ReadableHTMLParser(HTMLParser):
@@ -147,8 +280,7 @@ class _ReadableHTMLParser(HTMLParser):
         text = re.sub(r"[ \t\r\f\v]+", " ", text)
         text = re.sub(r"\n\s*\n(?:\s*\n)+", "\n\n", text)
         lines = [line.strip() for line in text.splitlines()]
-        text = "\n".join(line for line in lines if line).strip()
-        return title, text
+        return title, "\n".join(line for line in lines if line).strip()
 
 
 class WebFetcher:
