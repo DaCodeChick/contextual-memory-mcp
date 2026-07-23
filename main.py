@@ -15,12 +15,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = subcommands.add_parser(
         "scan",
-        help="Scan a user-specified directory and update the persistent index.",
+        help="Scan a file or directory into a memory database.",
     )
     scan.add_argument(
-        "directory",
+        "target",
         type=Path,
-        help="Directory containing the files to index.",
+        help="File or directory to index.",
     )
     scan.add_argument(
         "--exclude",
@@ -36,8 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--name",
         metavar="NAME",
         help=(
-            "Database name. When omitted, the name is derived from the "
-            "scanned directory."
+            "Database name. When omitted, index into the default main store. "
+            "A missing named database is created automatically."
         ),
     )
     mutability = scan.add_mutually_exclusive_group()
@@ -87,7 +87,7 @@ def main() -> None:
 
     if args.command == "scan":
         result = memory.scan(
-            directory=args.directory,
+            target=args.target,
             name=args.name,
             mutable=args.mutable,
             replace=args.replace,

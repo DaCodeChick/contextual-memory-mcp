@@ -40,48 +40,43 @@ cp .env.example .env
 Python 3.12 or 3.13 is recommended for broad compatibility with the current
 machine-learning dependencies.
 
-## Index a directory
+## Index files and directories
 
-The source directory is selected by the user at scan time. By default, the
-database name is derived from the directory name and the completed database is
-immutable:
+The CLI accepts either one file or an entire directory. With no `--name`, the
+content is added to the normal writable `main` store:
 
 ```bash
+uv run contextual-memory-index scan /path/to/character.md
 uv run contextual-memory-index scan /path/to/saved/prompts
 ```
 
-Provide an explicit database name with `--name`:
+Provide `--name` to add the target to a named database. If that database does
+not exist, it is created automatically:
 
 ```bash
-uv run contextual-memory-index scan /path/to/saved/prompts --name prompt-library
+uv run contextual-memory-index scan /path/to/character.md --name roleplay
 ```
 
-Keep the resulting database writable with `--mutable`:
+New named databases are immutable after indexing by default. Use `--mutable`
+when the named database should remain writable:
 
 ```bash
 uv run contextual-memory-index scan /path/to/saved/prompts --name prompt-library --mutable
 ```
 
-An existing database is never overwritten implicitly. Use `--replace` to
-replace the database with the resolved name:
+A later explicit scan can update an existing named database. Locked databases
+are reopened only for that update and then returned to their previous mode.
+Use `--replace` when the entire named database should be rebuilt instead:
 
 ```bash
 uv run contextual-memory-index scan /path/to/saved/prompts --name prompt-library --replace
 ```
 
-Exclude subdirectories by name or relative path:
+Directory scans support exclusions, and either kind of scan can force unchanged
+content to be indexed again:
 
 ```bash
-uv run contextual-memory-index scan /path/to/saved/prompts \
-  --exclude archive \
-  --exclude experiments \
-  --exclude old/deprecated
-```
-
-Force unchanged files to be indexed again:
-
-```bash
-uv run contextual-memory-index scan /path/to/saved/prompts --force
+uv run contextual-memory-index scan /path/to/saved/prompts --exclude archive --force
 ```
 
 ## Clear stored data
@@ -89,13 +84,13 @@ uv run contextual-memory-index scan /path/to/saved/prompts --force
 Interactive confirmation:
 
 ```bash
-uv run contextual-memory-index clear
+uv run contextual-memory-index clear --store main
 ```
 
 Non-interactive confirmation:
 
 ```bash
-uv run contextual-memory-index clear --yes
+uv run contextual-memory-index clear --store main --yes
 ```
 
 Scanning and clearing are deliberately CLI-only maintenance operations. They are

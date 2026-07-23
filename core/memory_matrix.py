@@ -16,6 +16,7 @@ from core.lifecycle import LifecyclePolicy
 from core.lifecycle_service import LifecycleRunResult, LifecycleService
 from core.models import SearchHit
 from core.retrieval_engine import RetrievalEngine
+from core.web_acquisition import WebAcquisitionService
 from core.stores import (
     MemoryRef,
     MemoryStoreConfig,
@@ -98,6 +99,11 @@ class MemoryStoreRuntime:
     @cached_property
     def retrieval(self) -> RetrievalEngine:
         return RetrievalEngine(self.settings, self.repository, self.vectors)
+
+    @cached_property
+    def web_acquisition(self) -> WebAcquisitionService:
+        self.require_writable()
+        return WebAcquisitionService(self.ingestion)
 
     @cached_property
     def lifecycle(self) -> LifecycleService:
@@ -310,75 +316,181 @@ class ContextualMemoryMatrix:
         return {"store_id": store_id, **result}
 
     @staticmethod
-    def _scan_store_id(directory: Path, name: str | None) -> str:
-        raw = (name if name is not None else directory.expanduser().resolve().name).strip()
+    def _scan_store_id(target: Path, name: str | None) -> str:
+        raw = (name if name is not None else target.expanduser().resolve().name).strip()
         if not raw:
             raise ValueError("The scan database name cannot be empty")
         store_id = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-._")
         if not store_id:
             raise ValueError(f"Invalid scan database name: {raw!r}")
-        if store_id == "main":
-            raise ValueError("The reserved database name 'main' cannot be used for scans")
         return store_id
 
-    def scan(
-        self,
-        directory: Path,
-        *,
-        name: str | None = None,
-        mutable: bool = False,
-        replace: bool = False,
-        **kwargs,
-    ) -> dict:
-        root = directory.expanduser().resolve()
-        store_id = self._scan_store_id(root, name)
+    def _create_named_store(
+        self, store_id: str, *, display_name: str, mutable: bool
+    ) -> tuple[MemoryStoreConfig, Path]:
+        if store_id == "main":
+            return self._main_config(), self.settings.data_dir
         store_root = self.settings.data_dir / "stores" / store_id
         sqlite_path = store_root / f"{store_id}.sqlite3"
         chroma_path = store_root / "chroma"
-
-        if store_root.exists():
-            if not replace:
-                raise FileExistsError(
-                    f"Memory database {store_id!r} already exists; use --replace to replace it"
-                )
-            self._runtimes.pop(store_id, None)
-            shutil.rmtree(store_root, ignore_errors=True)
-
-        build_config = MemoryStoreConfig(
+        config = MemoryStoreConfig(
             store_id=store_id,
-            display_name=name.strip() if name is not None else root.name,
+            display_name=display_name,
             sqlite_path=sqlite_path,
             chroma_path=chroma_path,
             collection_name=self.settings.collection_name,
             mode=StoreMode.READ_WRITE,
             enabled=True,
             priority=1.0,
-            specialty="directory-scan",
+            specialty="indexed-source",
         )
-        self._runtimes[store_id] = MemoryStoreRuntime(self.settings, build_config)
+        self._runtimes[store_id] = MemoryStoreRuntime(self.settings, config)
+        return config, store_root
 
+    def scan(
+        self,
+        target: Path,
+        *,
+        name: str | None = None,
+        mutable: bool = False,
+        replace: bool = False,
+        **kwargs,
+    ) -> dict:
+        resolved = target.expanduser().resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(f"Scan target does not exist: {resolved}")
+
+        # No explicit database means the normal writable default store.
+        store_id = self._scan_store_id(resolved, name) if name else "main"
+        display_name = name.strip() if name else "Main Memory"
+        existing = None
         try:
-            result = self._runtimes[store_id].ingestion.scan(root, **kwargs)
-        except Exception:
+            existing = self.store_config(store_id)
+        except KeyError:
+            pass
+
+        if replace and store_id == "main":
+            raise ValueError("The default main store cannot be replaced by scan")
+        if replace and existing is not None:
             self._runtimes.pop(store_id, None)
+            store_root = self.settings.data_dir / "stores" / store_id
             shutil.rmtree(store_root, ignore_errors=True)
+            existing = None
+
+        created = existing is None
+        original_mode = existing.mode if existing is not None else None
+        if existing is None:
+            build_config, store_root = self._create_named_store(
+                store_id, display_name=display_name, mutable=mutable
+            )
+        elif existing.mode == StoreMode.READ_WRITE:
+            build_config = existing
+            store_root = (
+                self.settings.data_dir
+                if store_id == "main"
+                else self.settings.data_dir / "stores" / store_id
+            )
+        else:
+            # Temporarily reopen an indexed store for an explicit update, then
+            # restore its locked mode after ingestion.
+            self._runtimes.pop(store_id, None)
+            build_config = dataclass_replace(existing, mode=StoreMode.READ_WRITE)
+            store_root = self.settings.data_dir / "stores" / store_id
+            self._runtimes[store_id] = MemoryStoreRuntime(self.settings, build_config)
+
+        runtime = self.store(store_id) if store_id == "main" else self._runtimes[store_id]
+        try:
+            if resolved.is_file():
+                result = runtime.ingestion.ingest_file(
+                    resolved, force=bool(kwargs.get("force", False))
+                )
+                result.update({"target": str(resolved), "kind": "file", "discovered": 1})
+            elif resolved.is_dir():
+                result = runtime.ingestion.scan(
+                    resolved,
+                    force=bool(kwargs.get("force", False)),
+                    excludes=kwargs.get("excludes"),
+                )
+                result["target"] = str(resolved)
+                result["kind"] = "directory"
+            else:
+                raise ValueError(f"Unsupported scan target: {resolved}")
+        except Exception:
+            if created and store_id != "main":
+                self._runtimes.pop(store_id, None)
+                shutil.rmtree(store_root, ignore_errors=True)
             raise
 
-        final_mode = StoreMode.READ_WRITE if mutable else StoreMode.IMMUTABLE
-        final_config = dataclass_replace(build_config, mode=final_mode)
-        write_store_manifest(store_root, final_config)
-        self._runtimes.pop(store_id, None)
+        if store_id == "main":
+            final_mode = StoreMode.READ_WRITE
+        elif original_mode is not None:
+            final_mode = original_mode
+        else:
+            final_mode = StoreMode.READ_WRITE if mutable else StoreMode.IMMUTABLE
+
+        if store_id != "main":
+            final_config = dataclass_replace(build_config, mode=final_mode)
+            write_store_manifest(store_root, final_config)
+            self._runtimes.pop(store_id, None)
+        else:
+            final_config = self._main_config()
 
         return {
             "store_id": store_id,
             "name": final_config.display_name,
-            "mutable": mutable,
+            "created": created,
+            "mutable": final_mode == StoreMode.READ_WRITE,
             "mode": int(final_mode),
             "mode_name": final_mode.name,
-            "sqlite_path": str(sqlite_path),
-            "chroma_path": str(chroma_path),
             **result,
         }
+
+    def acquire_web(
+        self, query: str, *, target_store: str | None = None
+    ) -> dict:
+        store_id = target_store or self.settings.web_acquisition_store
+        runtime = self.store(store_id)
+        runtime.require_writable()
+        result = runtime.web_acquisition.acquire(
+            query,
+            max_results=self.settings.web_acquisition_max_results,
+            max_pages=self.settings.web_acquisition_max_pages,
+        )
+        return {"store_id": store_id, **result.as_dict()}
+
+    def recall_with_acquisition(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        stores: list[str] | None = None,
+        acquire_if_missing: bool = True,
+        target_store: str | None = None,
+    ) -> tuple[list[SearchHit], dict | None]:
+        hits = self.retrieval.search(query, top_k, stores=stores)
+        best_score = hits[0].score if hits else 0.0
+        if (
+            not acquire_if_missing
+            or not self.settings.web_acquisition_enabled
+            or (hits and best_score >= self.settings.web_acquisition_min_score)
+        ):
+            return hits, None
+        try:
+            acquisition = self.acquire_web(query, target_store=target_store)
+        except Exception as exc:
+            return hits, {
+                "store_id": target_store or self.settings.web_acquisition_store,
+                "query": query,
+                "discovered": 0,
+                "fetched": 0,
+                "indexed": 0,
+                "unchanged": 0,
+                "failed": 1,
+                "sources": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        refreshed = self.retrieval.search(query, top_k, stores=stores)
+        return refreshed, acquisition
 
     def update_lifecycle(self, memory_ref: str, **kwargs) -> dict:
         ref = MemoryRef.parse(memory_ref)

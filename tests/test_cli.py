@@ -5,20 +5,21 @@ import pytest
 from main import build_parser
 
 
-def test_scan_cli_defaults_to_immutable_derived_name() -> None:
+def test_scan_cli_defaults_to_main_store() -> None:
     args = build_parser().parse_args(["scan", "/tmp/project"])
-    assert args.directory == Path("/tmp/project")
+    assert args.target == Path("/tmp/project")
     assert args.name is None
     assert args.mutable is False
     assert args.immutable is False
     assert args.replace is False
 
 
-def test_scan_cli_accepts_name_and_mutability() -> None:
+def test_scan_cli_accepts_file_name_and_mutability() -> None:
     args = build_parser().parse_args(
-        ["scan", "/tmp/project", "--name", "custom", "--mutable", "--replace"]
+        ["scan", "/tmp/character.md", "--name", "roleplay", "--mutable", "--replace"]
     )
-    assert args.name == "custom"
+    assert args.target == Path("/tmp/character.md")
+    assert args.name == "roleplay"
     assert args.mutable is True
     assert args.replace is True
 

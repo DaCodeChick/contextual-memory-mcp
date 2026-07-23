@@ -8,6 +8,9 @@ from core.memory_matrix import ContextualMemoryMatrix
 
 MCP_INSTRUCTIONS = """
 Use recall_memory whenever stored context may help answer the user's request.
+When local retrieval is missing or weak, recall_memory may automatically search
+and ingest relevant public web pages, then retry without requiring the user or
+model to provide URLs.
 
 REQUIRED STORE RESOLUTION:
 Before any memory write, determine the destination store. If a writable target
@@ -52,6 +55,8 @@ def recall_memory(
     top_k: int = 8,
     max_chars: int = 18000,
     stores: list[str] | None = None,
+    acquire_if_missing: bool = True,
+    acquisition_store: str | None = None,
 ) -> str:
     """Recall relevant long-term memory for the current task.
 
@@ -70,13 +75,34 @@ def recall_memory(
             Maximum number of distinct memory segments to retrieve.
         max_chars:
             Maximum size of the returned Markdown context.
+        acquire_if_missing:
+            Automatically search, fetch, index, and retry when local retrieval
+            is empty or below the configured relevance threshold.
+        acquisition_store:
+            Writable store receiving acquired web pages. Defaults to the
+            configured acquisition store, normally ``main``.
     """
-    return memory.context.build(
+    _, acquisition = memory.recall_with_acquisition(
+        query,
+        top_k=top_k,
+        stores=stores,
+        acquire_if_missing=acquire_if_missing,
+        target_store=acquisition_store,
+    )
+    context = memory.context.build(
         task=query,
         top_k=top_k,
         max_chars=max_chars,
         stores=stores,
     )
+    if acquisition is None:
+        return context
+    note = (
+        "<!-- automatic web acquisition: "
+        f"store={acquisition['store_id']} indexed={acquisition['indexed']} "
+        f"failed={acquisition['failed']} -->\n"
+    )
+    return note + context
 
 
 @mcp.tool()

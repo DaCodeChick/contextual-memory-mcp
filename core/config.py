@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     automatic_memory_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     automatic_memory_source_quality: float = Field(default=1.0, ge=0.0, le=1.0)
 
+    web_acquisition_enabled: bool = True
+    web_acquisition_min_score: float = Field(default=0.28, ge=0.0)
+    web_acquisition_max_results: int = Field(default=8, ge=1, le=30)
+    web_acquisition_max_pages: int = Field(default=4, ge=1, le=12)
+    web_acquisition_store: str = "main"
+
     include_globs: CsvList = ["*.md", "*.txt", "*.prompt"]
     exclude_dirs: CsvList = [
         ".git",

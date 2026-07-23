@@ -196,6 +196,72 @@ class IngestionService:
 
         return summary
 
+
+    def ingest_text(
+        self,
+        *,
+        source_path: str,
+        title: str,
+        text: str,
+        source_kind: str = "file",
+        force: bool = False,
+    ) -> dict:
+        normalized_path = source_path.strip()
+        if not normalized_path:
+            raise ValueError("source_path cannot be empty")
+        body = text.strip()
+        if not body:
+            raise ValueError("text cannot be empty")
+
+        digest = content_hash(body)
+        if not force and self.repository.source_hash(normalized_path) == digest:
+            return {"indexed": 0, "unchanged": 1, "segments": 0}
+
+        doc = SourceDocument(
+            source_id=stable_id("src", normalized_path),
+            path=Path(normalized_path),
+            relative_path=normalized_path,
+            title=title.strip() or normalized_path,
+            content=body,
+            content_hash=digest,
+            modified_ns=0,
+            size_bytes=len(body.encode("utf-8")),
+        )
+        segments = segment_document(
+            doc,
+            self.settings.chunk_size,
+            self.settings.chunk_overlap,
+        )
+        for segment in segments:
+            segment.memory_state = MemoryState.ACTIVE
+            segment.memory_origin = (
+                MemoryOrigin.SPECIALTY
+                if source_kind == "web"
+                else MemoryOrigin.IMPORTED_FILE
+            )
+        changes = self.repository.reconcile_document(
+            doc, segments, source_kind=source_kind
+        )
+        self.vectors.upsert_document(
+            doc, segments, deleted_ids=changes["deleted"]
+        )
+        return {"indexed": 1, "unchanged": 0, "segments": len(segments)}
+
+    def ingest_file(self, path: Path, *, force: bool = False) -> dict:
+        file_path = path.expanduser().resolve()
+        if not file_path.exists():
+            raise FileNotFoundError(f"Scan file does not exist: {file_path}")
+        if not file_path.is_file():
+            raise IsADirectoryError(f"Scan target is not a file: {file_path}")
+        doc = load_document(file_path, file_path.parent)
+        return self.ingest_text(
+            source_path=file_path.as_posix(),
+            title=doc.title,
+            text=doc.content,
+            source_kind="file",
+            force=force,
+        )
+
     def remember(
         self,
         title: str,
