@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     web_acquisition_store: str = "main"
     web_search_providers: CsvList = ["exa", "brave", "tavily", "searxng", "duckduckgo"]
     web_search_timeout: float = Field(default=12.0, gt=0.0, le=120.0)
+    web_search_cache_days: int = Field(default=7, ge=0, le=365)
+    web_acquisition_retry_days: int = Field(default=7, ge=0, le=365)
+    web_acquisition_refresh_days: int = Field(default=90, ge=0, le=3650)
     exa_api_key: str | None = None
     brave_search_api_key: str | None = None
     tavily_api_key: str | None = None
@@ -115,3 +118,7 @@ class Settings(BaseSettings):
     @property
     def stores_dir(self) -> Path:
         return self.data_dir / "stores"
+
+    @property
+    def web_cache_path(self) -> Path:
+        return self.data_dir / "web_acquisition.sqlite3"

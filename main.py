@@ -19,8 +19,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument(
         "target",
-        type=Path,
-        help="File or directory to index.",
+        nargs="?",
+        help="File, directory, or URL to index.",
+    )
+    scan.add_argument(
+        "--search",
+        metavar="QUERY",
+        help="Search the web and index selected results instead of scanning a path.",
     )
     scan.add_argument(
         "--exclude",
@@ -86,14 +91,36 @@ def main() -> None:
     memory = ContextualMemoryMatrix()
 
     if args.command == "scan":
-        result = memory.scan(
-            target=args.target,
-            name=args.name,
-            mutable=args.mutable,
-            replace=args.replace,
-            force=args.force,
-            excludes=args.exclude,
-        )
+        if args.search:
+            if args.target:
+                parser.error("scan accepts either TARGET or --search, not both")
+            result = memory.scan_web_query(
+                args.search,
+                name=args.name,
+                mutable=args.mutable,
+                replace=args.replace,
+                force=args.force,
+            )
+        else:
+            if not args.target:
+                parser.error("scan requires TARGET unless --search is provided")
+            if str(args.target).startswith(("http://", "https://")):
+                result = memory.scan_url(
+                    str(args.target),
+                    name=args.name,
+                    mutable=args.mutable,
+                    replace=args.replace,
+                    force=args.force,
+                )
+            else:
+                result = memory.scan(
+                    target=Path(args.target),
+                    name=args.name,
+                    mutable=args.mutable,
+                    replace=args.replace,
+                    force=args.force,
+                    excludes=args.exclude,
+                )
     else:
         if not args.yes:
             answer = input(

@@ -297,3 +297,28 @@ CM_SEARXNG_URL=http://localhost:8080
 ```
 
 With no API keys or SearXNG URL, DuckDuckGo is used as the zero-configuration fallback. For a self-hosted setup, place `searxng` first and set `CM_SEARXNG_URL`. The configured SearXNG instance must permit JSON search responses.
+
+
+## Web acquisition and indexing
+
+Weak or empty `recall_memory` results can automatically trigger web discovery, page ingestion, and a second local recall. Search providers are attempted in configured priority order; unconfigured providers are skipped and failures fall through to the next provider.
+
+```env
+CM_WEB_SEARCH_PROVIDERS=exa,brave,tavily,searxng,duckduckgo
+CM_WEB_SEARCH_CACHE_DAYS=7
+CM_WEB_ACQUISITION_RETRY_DAYS=7
+CM_WEB_ACQUISITION_REFRESH_DAYS=90
+```
+
+Search results are cached in `data/web_acquisition.sqlite3`. Acquisition history suppresses repeated searches for unavailable topics and schedules successful topics for a later refresh.
+
+The index CLI accepts directories, individual files, direct URLs, and search queries:
+
+```bash
+python main.py scan ./prompts
+python main.py scan ./character.md --name roleplay
+python main.py scan https://example.org/wiki/Character --name roleplay
+python main.py scan --search "Character franchise personality dialogue" --name roleplay
+```
+
+When `--name` is omitted, content is indexed into the writable `main` store. Missing named stores are created automatically and are immutable after indexing unless `--mutable` is supplied. MediaWiki pages use their API when available, and GitHub `blob` URLs are fetched through their raw-content endpoint.

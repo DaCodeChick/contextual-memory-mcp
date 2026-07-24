@@ -445,6 +445,89 @@ class ContextualMemoryMatrix:
             **result,
         }
 
+    def _prepare_ingestion_store(
+        self,
+        *,
+        source_name: str,
+        name: str | None,
+        mutable: bool,
+        replace: bool,
+    ):
+        store_id = self._scan_store_id(Path(source_name), name) if name else "main"
+        display_name = name.strip() if name else "Main Memory"
+        try:
+            existing = self.store_config(store_id)
+        except KeyError:
+            existing = None
+        if replace and store_id == "main":
+            raise ValueError("The default main store cannot be replaced")
+        if replace and existing is not None:
+            self._runtimes.pop(store_id, None)
+            shutil.rmtree(self.settings.data_dir / "stores" / store_id, ignore_errors=True)
+            existing = None
+        created = existing is None
+        original_mode = existing.mode if existing is not None else None
+        if existing is None:
+            config, root = self._create_named_store(store_id, display_name=display_name, mutable=mutable)
+        elif existing.mode == StoreMode.READ_WRITE:
+            config = existing
+            root = self.settings.data_dir if store_id == "main" else self.settings.data_dir / "stores" / store_id
+        else:
+            self._runtimes.pop(store_id, None)
+            config = dataclass_replace(existing, mode=StoreMode.READ_WRITE)
+            root = self.settings.data_dir / "stores" / store_id
+            self._runtimes[store_id] = MemoryStoreRuntime(self.settings, config)
+        runtime = self.store(store_id) if store_id == "main" else self._runtimes[store_id]
+        return store_id, display_name, created, original_mode, config, root, runtime
+
+    def _finish_ingestion_store(self, store_id, created, original_mode, config, root, mutable):
+        if store_id == "main":
+            final_mode = StoreMode.READ_WRITE
+            final_config = self._main_config()
+        else:
+            final_mode = original_mode if original_mode is not None else (StoreMode.READ_WRITE if mutable else StoreMode.IMMUTABLE)
+            final_config = dataclass_replace(config, mode=final_mode)
+            write_store_manifest(root, final_config)
+            self._runtimes.pop(store_id, None)
+        return {
+            "store_id": store_id,
+            "name": final_config.display_name,
+            "created": created,
+            "mutable": final_mode == StoreMode.READ_WRITE,
+            "mode": int(final_mode),
+            "mode_name": final_mode.name,
+        }
+
+    def scan_url(self, url: str, *, name: str | None = None, mutable: bool = False, replace: bool = False, force: bool = False) -> dict:
+        parsed_name = re.sub(r"[^A-Za-z0-9._-]+", "-", url).strip("-._")[:80] or "web"
+        prepared = self._prepare_ingestion_store(source_name=parsed_name, name=name, mutable=mutable, replace=replace)
+        store_id, _, created, original_mode, config, root, runtime = prepared
+        try:
+            result = runtime.web_acquisition.ingest_url(url, force=force)
+        except Exception:
+            if created and store_id != "main":
+                self._runtimes.pop(store_id, None)
+                shutil.rmtree(root, ignore_errors=True)
+            raise
+        return {**self._finish_ingestion_store(store_id, created, original_mode, config, root, mutable), "kind": "url", "target": url, **result}
+
+    def scan_web_query(self, query: str, *, name: str | None = None, mutable: bool = False, replace: bool = False, force: bool = False) -> dict:
+        prepared = self._prepare_ingestion_store(source_name="web-search", name=name, mutable=mutable, replace=replace)
+        store_id, _, created, original_mode, config, root, runtime = prepared
+        try:
+            result = runtime.web_acquisition.acquire(
+                query,
+                max_results=self.settings.web_acquisition_max_results,
+                max_pages=self.settings.web_acquisition_max_pages,
+                force=force,
+            ).as_dict()
+        except Exception:
+            if created and store_id != "main":
+                self._runtimes.pop(store_id, None)
+                shutil.rmtree(root, ignore_errors=True)
+            raise
+        return {**self._finish_ingestion_store(store_id, created, original_mode, config, root, mutable), "kind": "web_search", **result}
+
     def acquire_web(
         self, query: str, *, target_store: str | None = None
     ) -> dict:

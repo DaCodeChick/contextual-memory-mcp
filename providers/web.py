@@ -284,26 +284,71 @@ class _ReadableHTMLParser(HTMLParser):
 
 
 class WebFetcher:
+    MEDIAWIKI_HOST_HINTS = ("wikipedia.org", "fandom.com", "wiki.org", "wiktionary.org")
+
     def __init__(self, *, timeout: float = 15.0, max_bytes: int = 3_000_000, user_agent: str = "ContextualMemoryMCP/0.1") -> None:
         self.timeout = timeout
         self.max_bytes = max_bytes
         self.user_agent = user_agent
 
-    def fetch(self, url: str) -> WebPage:
-        request = Request(url, headers={"User-Agent": self.user_agent})
+    def _read(self, request: Request) -> tuple[str, str, bytes]:
         with urlopen(request, timeout=self.timeout) as response:
             content_type = response.headers.get_content_type()
             charset = response.headers.get_content_charset() or "utf-8"
             data = response.read(self.max_bytes + 1)
         if len(data) > self.max_bytes:
-            raise ValueError(f"Web page exceeds maximum size: {url}")
-        if content_type not in {"text/html", "text/plain", "application/xhtml+xml"}:
+            raise ValueError("Web response exceeds maximum size")
+        return content_type, charset, data
+
+    @staticmethod
+    def _github_raw_url(url: str) -> str | None:
+        parsed = urlparse(url)
+        if parsed.netloc.casefold() != "github.com":
+            return None
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 5 and parts[2] == "blob":
+            owner, repo, _, branch, *path = parts
+            return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{'/'.join(path)}"
+        return None
+
+    def _fetch_mediawiki(self, url: str) -> WebPage | None:
+        parsed = urlparse(url)
+        if "/wiki/" not in parsed.path:
+            return None
+        if not any(hint in parsed.netloc.casefold() for hint in self.MEDIAWIKI_HOST_HINTS):
+            return None
+        title = unquote(parsed.path.split("/wiki/", 1)[1]).replace("_", " ")
+        api_url = f"{parsed.scheme}://{parsed.netloc}/api.php?{urlencode({'action': 'query', 'prop': 'extracts', 'explaintext': 1, 'redirects': 1, 'titles': title, 'format': 'json', 'formatversion': 2})}"
+        try:
+            _, _, data = self._read(Request(api_url, headers={"User-Agent": self.user_agent, "Accept": "application/json"}))
+            payload = json.loads(data.decode("utf-8", errors="replace"))
+            pages = ((payload.get("query") or {}).get("pages") or [])
+            if not pages or not isinstance(pages[0], dict):
+                return None
+            page = pages[0]
+            text = str(page.get("extract") or "").strip()
+            if not text:
+                return None
+            return WebPage(title=str(page.get("title") or title), url=url, text=text)
+        except Exception:
+            return None
+
+    def fetch(self, url: str) -> WebPage:
+        mediawiki = self._fetch_mediawiki(url)
+        if mediawiki is not None:
+            return mediawiki
+
+        effective_url = self._github_raw_url(url) or url
+        request = Request(effective_url, headers={"User-Agent": self.user_agent})
+        content_type, charset, data = self._read(request)
+        if content_type not in {"text/html", "text/plain", "application/xhtml+xml", "text/markdown"}:
             raise ValueError(f"Unsupported web content type {content_type!r}: {url}")
         decoded = data.decode(charset, errors="replace")
         fallback = urlparse(url).netloc or url
-        if content_type == "text/plain":
+        if content_type in {"text/plain", "text/markdown"}:
             return WebPage(title=fallback, url=url, text=decoded.strip())
         parser = _ReadableHTMLParser()
         parser.feed(decoded)
         title, text = parser.result(fallback)
         return WebPage(title=title, url=url, text=text)
+
