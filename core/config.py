@@ -82,7 +82,9 @@ class Settings(BaseSettings):
     web_acquisition_max_pages: int = Field(default=4, ge=1, le=12)
     web_acquisition_store: str = "main"
     web_search_providers: CsvList = ["exa", "brave", "tavily", "searxng", "duckduckgo"]
-    web_search_timeout: float = Field(default=12.0, gt=0.0, le=120.0)
+    web_search_timeout: float = Field(default=6.0, gt=0.0, le=120.0)
+    web_fetch_timeout: float = Field(default=8.0, gt=0.0, le=120.0)
+    web_acquisition_total_timeout: float = Field(default=45.0, gt=1.0, le=600.0)
     web_search_cache_days: int = Field(default=7, ge=0, le=365)
     web_acquisition_retry_days: int = Field(default=7, ge=0, le=365)
     web_acquisition_refresh_days: int = Field(default=90, ge=0, le=3650)

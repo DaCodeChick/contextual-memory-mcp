@@ -511,10 +511,13 @@ class ContextualMemoryMatrix:
             raise
         return {**self._finish_ingestion_store(store_id, created, original_mode, config, root, mutable), "kind": "url", "target": url, **result}
 
-    def scan_web_query(self, query: str, *, name: str | None = None, mutable: bool = False, replace: bool = False, force: bool = False) -> dict:
+    def scan_web_query(self, query: str, *, name: str | None = None, mutable: bool = False, replace: bool = False, force: bool = False, progress=None) -> dict:
         prepared = self._prepare_ingestion_store(source_name="web-search", name=name, mutable=mutable, replace=replace)
         store_id, _, created, original_mode, config, root, runtime = prepared
         try:
+            runtime.web_acquisition.progress = progress
+            if hasattr(runtime.web_acquisition.search_provider, "progress"):
+                runtime.web_acquisition.search_provider.progress = progress
             result = runtime.web_acquisition.acquire(
                 query,
                 max_results=self.settings.web_acquisition_max_results,

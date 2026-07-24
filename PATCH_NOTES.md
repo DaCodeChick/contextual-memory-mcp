@@ -78,3 +78,13 @@
 - Providers requiring credentials are skipped when not configured.
 - DuckDuckGo remains the dependency-free final fallback.
 - Added provider-chain tests covering errors, empty results, total failure, and configuration-based selection.
+
+
+## Web search hang fix
+
+- Reduced the default per-provider search timeout to 6 seconds.
+- Added a separate 8-second page-fetch timeout.
+- Added a 45-second overall acquisition budget.
+- Switched the DuckDuckGo fallback to its lighter GET endpoint.
+- Added flushed CLI progress messages on stderr for provider search, candidate discovery, fetching, indexing, and failures.
+- Kept MCP operation silent unless a caller explicitly supplies a progress callback, preventing protocol corruption.

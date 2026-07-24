@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 import json
 import re
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -68,17 +68,20 @@ class ProviderChain:
 
     name = "chain"
 
-    def __init__(self, providers: Iterable[SearchProvider]) -> None:
+    def __init__(self, providers: Iterable[SearchProvider], *, progress: Callable[[str], None] | None = None) -> None:
         self.providers = tuple(providers)
         if not self.providers:
             raise ValueError("ProviderChain requires at least one provider")
         self.last_errors: tuple[str, ...] = ()
         self.last_provider: str | None = None
+        self.progress = progress
 
     def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
         errors: list[str] = []
         self.last_provider = None
         for provider in self.providers:
+            if self.progress is not None:
+                self.progress(f"Searching with {provider.name}...")
             try:
                 results = provider.search(query, limit=limit)
             except Exception as exc:
@@ -140,21 +143,27 @@ class DuckDuckGoSearchProvider:
     """Dependency-free fallback using DuckDuckGo's HTML endpoint."""
 
     name = "duckduckgo"
-    endpoint = "https://html.duckduckgo.com/html/"
+    endpoint = "https://lite.duckduckgo.com/lite/"
 
     def __init__(self, *, timeout: float = 12.0, user_agent: str = "ContextualMemoryMCP/0.1") -> None:
         self.timeout = timeout
         self.user_agent = user_agent
 
     def search(self, query: str, *, limit: int = 8) -> list[SearchResult]:
-        body = urlencode({"q": query}).encode("utf-8")
+        url = f"{self.endpoint}?{urlencode({'q': query})}"
         request = Request(
-            self.endpoint,
-            data=body,
-            headers={"User-Agent": self.user_agent, "Content-Type": "application/x-www-form-urlencoded"},
+            url,
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml",
+                "Connection": "close",
+            },
         )
         with urlopen(request, timeout=self.timeout) as response:
-            html = response.read(2_000_000).decode("utf-8", errors="replace")
+            data = response.read(2_000_001)
+        if len(data) > 2_000_000:
+            raise SearchProviderError("DuckDuckGo response exceeded maximum size")
+        html = data.decode("utf-8", errors="replace")
         parser = _SearchResultParser()
         parser.feed(html)
         return _deduplicate(parser.results, limit)

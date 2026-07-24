@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from core.memory_matrix import ContextualMemoryMatrix
@@ -100,6 +101,7 @@ def main() -> None:
                 mutable=args.mutable,
                 replace=args.replace,
                 force=args.force,
+                progress=lambda message: print(message, file=sys.stderr, flush=True),
             )
         else:
             if not args.target:
