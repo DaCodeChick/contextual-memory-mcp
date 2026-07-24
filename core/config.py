@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     searxng_url: str | None = None
 
     include_globs: CsvList = ["*.md", "*.txt", "*.prompt"]
+    visual_globs: CsvList = [
+        "*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp", "*.tif", "*.tiff"
+    ]
+    vision_base_url: str = "http://127.0.0.1:1234/v1"
+    vision_model: str | None = None
+    vision_api_key: str | None = None
+    vision_timeout: float = Field(default=90.0, gt=0.0, le=600.0)
     exclude_dirs: CsvList = [
         ".git",
         ".venv",

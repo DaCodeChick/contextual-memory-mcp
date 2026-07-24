@@ -322,3 +322,34 @@ python main.py scan --search "Character franchise personality dialogue" --name r
 ```
 
 When `--name` is omitted, content is indexed into the writable `main` store. Missing named stores are created automatically and are immutable after indexing unless `--mutable` is supplied. MediaWiki pages use their API when available, and GitHub `blob` URLs are fetched through their raw-content endpoint.
+
+## Visual memory
+
+`scan` now discovers common image formats and sends them to an OpenAI-compatible
+vision model. LM Studio's local server is the default endpoint.
+
+```bash
+contextual-memory-index scan ./reference-images \
+  --name visual-reference \
+  --vision-model qwen2.5-vl-7b-instruct
+```
+
+The extractor stores a searchable visual summary plus independently classified
+text regions. Its general-purpose taxonomy distinguishes speech and thought
+bubbles, captions/overlays, clothing text, text attached to physical surfaces,
+documents, UI/HUD text, sound effects, watermarks, and uncategorized text.
+Every region includes normalized bounding coordinates and separate OCR and
+classification confidence values. This lets retrieval distinguish, for example,
+a caption saying "red coat" from the words printed on the coat itself.
+
+Configuration:
+
+- `CM_VISION_MODEL`: default vision model name (required when images are found)
+- `CM_VISION_BASE_URL`: compatible `/v1` endpoint; defaults to LM Studio at
+  `http://127.0.0.1:1234/v1`
+- `CM_VISION_API_KEY`: optional bearer token
+- `CM_VISION_TIMEOUT`: request timeout in seconds
+- `CM_VISUAL_GLOBS`: comma-separated image globs
+
+Use `--no-vision` to skip image files during a directory scan. Scanning a single
+image with `--no-vision` is rejected rather than silently doing nothing.

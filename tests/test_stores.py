@@ -225,12 +225,12 @@ def test_scan_mutable_and_replace_are_explicit(tmp_path: Path, monkeypatch: pyte
         fake_runtime_class({"discovered": 0, "indexed": 0, "segments": 0}),
     )
 
-    first = matrix.scan(source, mutable=True)
+    first = matrix.scan(source, name="source", mutable=True)
     assert first["mode_name"] == "READ_WRITE"
 
-    with pytest.raises(FileExistsError):
-        matrix.scan(source, mutable=True)
+    updated = matrix.scan(source, name="source", mutable=True)
+    assert updated["store_id"] == "source"
 
-    replaced = matrix.scan(source, mutable=True, replace=True)
+    replaced = matrix.scan(source, name="source", mutable=True, replace=True)
     assert replaced["store_id"] == "source"
     assert matrix.store_config("source").mode is StoreMode.READ_WRITE

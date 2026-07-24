@@ -67,6 +67,30 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Re-index files even when their content hash is unchanged.",
     )
+    vision = scan.add_mutually_exclusive_group()
+    vision.add_argument(
+        "--vision",
+        dest="vision",
+        action="store_true",
+        default=True,
+        help="Analyze supported image files during scanning (default).",
+    )
+    vision.add_argument(
+        "--no-vision",
+        dest="vision",
+        action="store_false",
+        help="Skip supported image files when scanning directories.",
+    )
+    scan.add_argument(
+        "--vision-model",
+        metavar="MODEL",
+        help="Vision model served by an OpenAI-compatible endpoint.",
+    )
+    scan.add_argument(
+        "--vision-base-url",
+        metavar="URL",
+        help="OpenAI-compatible base URL (default: CM_VISION_BASE_URL or LM Studio localhost).",
+    )
 
     clear = subcommands.add_parser(
         "clear",
@@ -122,6 +146,9 @@ def main() -> None:
                     replace=args.replace,
                     force=args.force,
                     excludes=args.exclude,
+                    vision=args.vision,
+                    vision_model=args.vision_model,
+                    vision_base_url=args.vision_base_url,
                 )
     else:
         if not args.yes:

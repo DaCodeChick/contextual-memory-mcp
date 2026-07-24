@@ -41,3 +41,12 @@ def test_scan_cli_accepts_web_search() -> None:
     args = build_parser().parse_args(["scan", "--search", "L'Arachel Fire Emblem"])
     assert args.target is None
     assert args.search == "L'Arachel Fire Emblem"
+
+
+def test_scan_cli_visual_defaults_and_overrides() -> None:
+    args = build_parser().parse_args(["scan", "/tmp/images", "--vision-model", "qwen-vl"])
+    assert args.vision is True
+    assert args.vision_model == "qwen-vl"
+
+    skipped = build_parser().parse_args(["scan", "/tmp/images", "--no-vision"])
+    assert skipped.vision is False

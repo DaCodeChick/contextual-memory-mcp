@@ -12,6 +12,7 @@ from core.enums import (
 from core.models import SourceDocument
 from database.repositories import SQLiteRepository
 from database.vector_memory import VectorMemory
+from extraction.visual_parser import OpenAICompatibleVisionProvider, is_visual_file, load_visual_document
 from extraction.markdown_parser import (
     content_hash,
     load_document,
@@ -89,6 +90,8 @@ class IngestionService:
         self,
         directory: Path,
         excludes: list[str] | None = None,
+        *,
+        include_visual: bool = True,
     ) -> list[Path]:
         root = directory.expanduser().resolve()
 
@@ -104,7 +107,10 @@ class IngestionService:
         )
 
         paths: set[Path] = set()
-        for pattern in self.settings.include_globs:
+        patterns = list(self.settings.include_globs)
+        if include_visual:
+            patterns.extend(self.settings.visual_globs)
+        for pattern in patterns:
             for path in root.rglob(pattern):
                 if not path.is_file():
                     continue
@@ -124,9 +130,14 @@ class IngestionService:
         directory: Path,
         force: bool = False,
         excludes: list[str] | None = None,
+        *,
+        vision: bool = True,
+        vision_model: str | None = None,
+        vision_base_url: str | None = None,
     ) -> dict:
         root = directory.expanduser().resolve()
-        files = self.discover(root, excludes)
+        files = self.discover(root, excludes, include_visual=vision)
+        provider = self._vision_provider(vision_model, vision_base_url) if any(is_visual_file(p) for p in files) else None
 
         root_key = root.as_posix()
         current = {
@@ -142,6 +153,7 @@ class IngestionService:
             "unchanged": 0,
             "deleted": 0,
             "segments": 0,
+            "visual_files": sum(1 for path in files if is_visual_file(path)),
             "excluded": sorted(
                 set(self.settings.exclude_dirs) | set(excludes or [])
             ),
@@ -154,7 +166,11 @@ class IngestionService:
                 summary["deleted"] += 1
 
         for path in files:
-            doc = load_document(path, root)
+            doc = (
+                load_visual_document(path, root, provider)
+                if is_visual_file(path) and provider is not None
+                else load_document(path, root)
+            )
 
             stored_path = f"{root_key}::{doc.relative_path}"
             doc = SourceDocument(
@@ -247,20 +263,71 @@ class IngestionService:
         )
         return {"indexed": 1, "unchanged": 0, "segments": len(segments)}
 
-    def ingest_file(self, path: Path, *, force: bool = False) -> dict:
+    def _vision_provider(
+        self,
+        model: str | None = None,
+        base_url: str | None = None,
+    ) -> OpenAICompatibleVisionProvider:
+        resolved_model = model or self.settings.vision_model
+        if not resolved_model:
+            raise RuntimeError(
+                "Visual files were found, but no vision model is configured. "
+                "Use --vision-model or set CM_VISION_MODEL. Use --no-vision to skip images."
+            )
+        return OpenAICompatibleVisionProvider(
+            base_url=base_url or self.settings.vision_base_url,
+            model=resolved_model,
+            api_key=self.settings.vision_api_key,
+            timeout=self.settings.vision_timeout,
+        )
+
+    def ingest_file(
+        self,
+        path: Path,
+        *,
+        force: bool = False,
+        vision: bool = True,
+        vision_model: str | None = None,
+        vision_base_url: str | None = None,
+    ) -> dict:
         file_path = path.expanduser().resolve()
         if not file_path.exists():
             raise FileNotFoundError(f"Scan file does not exist: {file_path}")
         if not file_path.is_file():
             raise IsADirectoryError(f"Scan target is not a file: {file_path}")
-        doc = load_document(file_path, file_path.parent)
-        return self.ingest_text(
-            source_path=file_path.as_posix(),
+        if is_visual_file(file_path):
+            if not vision:
+                raise ValueError("Visual scan disabled for an image target")
+            provider = self._vision_provider(vision_model, vision_base_url)
+            doc = load_visual_document(file_path, file_path.parent, provider)
+            source_kind = "visual"
+        else:
+            doc = load_document(file_path, file_path.parent)
+            source_kind = "file"
+        stored_path = file_path.as_posix()
+        if not force and self.repository.source_hash(stored_path) == doc.content_hash:
+            return {"indexed": 0, "unchanged": 1, "segments": 0}
+        doc = SourceDocument(
+            source_id=stable_id("src", stored_path),
+            path=doc.path,
+            relative_path=stored_path,
             title=doc.title,
-            text=doc.content,
-            source_kind="file",
-            force=force,
+            content=doc.content,
+            content_hash=doc.content_hash,
+            modified_ns=doc.modified_ns,
+            size_bytes=doc.size_bytes,
         )
+        segments = segment_document(
+            doc, self.settings.chunk_size, self.settings.chunk_overlap
+        )
+        for segment in segments:
+            segment.memory_state = MemoryState.ACTIVE
+            segment.memory_origin = MemoryOrigin.IMPORTED_FILE
+        changes = self.repository.reconcile_document(
+            doc, segments, source_kind=source_kind
+        )
+        self.vectors.upsert_document(doc, segments, deleted_ids=changes["deleted"])
+        return {"indexed": 1, "unchanged": 0, "segments": len(segments)}
 
     def remember(
         self,

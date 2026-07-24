@@ -398,11 +398,15 @@ class ContextualMemoryMatrix:
             store_root = self.settings.data_dir / "stores" / store_id
             self._runtimes[store_id] = MemoryStoreRuntime(self.settings, build_config)
 
-        runtime = self.store(store_id) if store_id == "main" else self._runtimes[store_id]
+        runtime = self.store(store_id)
         try:
             if resolved.is_file():
                 result = runtime.ingestion.ingest_file(
-                    resolved, force=bool(kwargs.get("force", False))
+                    resolved,
+                    force=bool(kwargs.get("force", False)),
+                    vision=bool(kwargs.get("vision", True)),
+                    vision_model=kwargs.get("vision_model"),
+                    vision_base_url=kwargs.get("vision_base_url"),
                 )
                 result.update({"target": str(resolved), "kind": "file", "discovered": 1})
             elif resolved.is_dir():
@@ -410,6 +414,9 @@ class ContextualMemoryMatrix:
                     resolved,
                     force=bool(kwargs.get("force", False)),
                     excludes=kwargs.get("excludes"),
+                    vision=bool(kwargs.get("vision", True)),
+                    vision_model=kwargs.get("vision_model"),
+                    vision_base_url=kwargs.get("vision_base_url"),
                 )
                 result["target"] = str(resolved)
                 result["kind"] = "directory"
@@ -477,7 +484,7 @@ class ContextualMemoryMatrix:
             config = dataclass_replace(existing, mode=StoreMode.READ_WRITE)
             root = self.settings.data_dir / "stores" / store_id
             self._runtimes[store_id] = MemoryStoreRuntime(self.settings, config)
-        runtime = self.store(store_id) if store_id == "main" else self._runtimes[store_id]
+        runtime = self.store(store_id)
         return store_id, display_name, created, original_mode, config, root, runtime
 
     def _finish_ingestion_store(self, store_id, created, original_mode, config, root, mutable):
